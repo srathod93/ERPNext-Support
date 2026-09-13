@@ -43,6 +43,24 @@ fix itself.
   document's context (e.g. "Sales Invoice INV-001 won't submit, what's wrong?").
 - Or go to the **Support AI** page directly from Desk for a general question.
 
+### Running in this environment
+
+Ollama and the Frappe web server were installed/started manually here (no root access, so no
+systemd unit):
+
+```bash
+# Ollama (user-space install, already pulled llama3.2:3b)
+OLLAMA_MODELS=$HOME/.local/ollama/models ~/.local/ollama/bin/ollama serve &
+
+# Frappe web server
+cd $PATH_TO_YOUR_BENCH && bench serve --port 8000 &
+```
+
+Both need to be running for the chat to work; if the machine restarts, re-run the two commands
+above. CPU-only inference on `llama3.2:3b` takes roughly 1-2 minutes per reply here — that's
+expected, not a bug. For faster responses, either use a smaller model or point Support AI Settings
+at a free-tier hosted OpenAI-compatible API instead.
+
 ### Installation
 
 ```bash
