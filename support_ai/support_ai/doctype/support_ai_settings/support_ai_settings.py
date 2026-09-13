@@ -30,7 +30,11 @@ class SupportAISettings(Document):
 def test_connection():
 	"""Send a trivial ping to the configured LLM provider and return its reply."""
 	frappe.only_for("System Manager")
-	from support_ai.ai.llm import chat
+	from support_ai.ai.llm import LLMError, chat
 
-	reply = chat([{"role": "user", "content": "Reply with exactly: OK"}])
+	try:
+		reply = chat([{"role": "user", "content": "Reply with exactly: OK"}])
+	except LLMError as e:
+		return {"success": False, "message": str(e)}
+
 	return {"success": True, "reply": reply}
