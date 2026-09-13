@@ -46,8 +46,9 @@ def ask(conversation, message, reference_doctype=None, reference_name=None):
 
 	diagnostic_context = build_context_payload(reference_doctype, reference_name)
 
-	settings = frappe.get_cached_doc("Support AI Settings")
-	llm_messages = [{"role": "system", "content": settings.system_prompt}]
+	from support_ai.support_ai.doctype.support_ai_settings.support_ai_settings import get_system_prompt
+
+	llm_messages = [{"role": "system", "content": get_system_prompt()}]
 	if diagnostic_context is not None:
 		llm_messages.append(
 			{
