@@ -24,7 +24,21 @@ def _alarm_handler(signum, frame):
 
 DOCSTATUS_LABELS = {0: "Draft", 1: "Submitted", 2: "Cancelled"}
 
-SNAPSHOT_FIELDS = ("name", "owner", "modified", "modified_by", "status", "workflow_state", "docstatus")
+ALWAYS_INCLUDE_FIELDS = ("name", "owner", "modified", "modified_by", "docstatus")
+
+SKIP_FIELDTYPES = {
+	"Section Break",
+	"Column Break",
+	"Tab Break",
+	"Fold",
+	"Heading",
+	"Button",
+	"HTML",
+	"Attach",
+	"Attach Image",
+	"Signature",
+	"Password",
+}
 
 
 def build_document_context(doctype, name):
@@ -38,6 +52,11 @@ def build_document_context(doctype, name):
 	meta = frappe.get_meta(doctype)
 
 	context = {
+		"_notes": (
+			"field_values holds this specific document's actual current data. "
+			"custom_code holds metadata about the doctype's structure and customizations "
+			"(field definitions, scripts, hooks) - it is NOT this document's data."
+		),
 		"doctype": doctype,
 		"name": name,
 		"docstatus": doc.docstatus,
@@ -52,11 +71,46 @@ def build_document_context(doctype, name):
 		"missing_mandatory_fields": get_missing_mandatory_fields(doc, meta),
 		"validation_check": run_validation_check(doc),
 		"workflow": get_workflow_context(doctype, doc),
-		"recent_error_logs": get_related_error_logs(name),
+		"recent_error_logs": get_related_error_logs(doctype, name),
 		"custom_code": get_doctype_custom_code_context(doctype),
-		"field_snapshot": {f: doc.get(f) for f in SNAPSHOT_FIELDS if doc.get(f) is not None},
+		"field_values": get_field_values(doc, meta),
 	}
 	return context
+
+
+def get_field_values(doc, meta, max_fields=80):
+	"""Actual current values on this document - not schema metadata. Skips
+	layout-only fieldtypes and attachments/passwords, summarizes child tables
+	by row count instead of dumping every row, and drops empty scalar fields
+	to keep the LLM prompt focused and small (this matters a lot on
+	CPU-only/low-RAM Ollama hosts where prompt size affects latency)."""
+	values = {}
+	child_tables = {}
+
+	for df in meta.fields:
+		if df.fieldtype in SKIP_FIELDTYPES:
+			continue
+		value = doc.get(df.fieldname)
+
+		if df.fieldtype in ("Table", "Table MultiSelect"):
+			if value:
+				child_tables[df.fieldname] = f"{len(value)} row(s)"
+			continue
+
+		if value in (None, ""):
+			continue
+
+		values[df.fieldname] = value
+		if len(values) >= max_fields:
+			break
+
+	for f in ALWAYS_INCLUDE_FIELDS:
+		values.setdefault(f, doc.get(f))
+
+	if child_tables:
+		values["_child_tables"] = child_tables
+
+	return values
 
 
 def get_missing_mandatory_fields(doc, meta):
@@ -141,10 +195,14 @@ def get_workflow_context(doctype, doc):
 	}
 
 
-def get_related_error_logs(name, limit=5, max_chars=2000):
+def get_related_error_logs(doctype, name, limit=5, max_chars=2000):
+	"""Looks up Error Log by its indexed reference_doctype/reference_name
+	columns - never a free-text LIKE scan, which on a large Error Log table
+	(this site has millions of rows) would be an unindexed full table scan
+	and can take minutes."""
 	logs = frappe.get_all(
 		"Error Log",
-		filters=[["error", "like", f"%{name}%"]],
+		filters={"reference_doctype": doctype, "reference_name": name},
 		fields=["name", "error", "creation"],
 		order_by="creation desc",
 		limit_page_length=limit,

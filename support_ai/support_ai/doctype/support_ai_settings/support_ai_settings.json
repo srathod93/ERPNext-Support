@@ -50,7 +50,8 @@
    "label": "Temperature"
   },
   {
-   "default": "60",
+   "default": "120",
+   "description": "CPU-only Ollama inference on a small model can take 1-2 minutes for a full diagnostic reply. Increase further if you see timeout errors.",
    "fieldname": "request_timeout",
    "fieldtype": "Int",
    "label": "Request Timeout (seconds)"
@@ -70,8 +71,9 @@
    "label": "Ollama Base URL"
   },
   {
-   "default": "llama3.1",
+   "default": "llama3.2:3b",
    "depends_on": "eval:doc.llm_provider==\"Ollama\"",
+   "description": "A small model is recommended on CPU-only/low-RAM hosts. Pull it first: `ollama pull llama3.2:3b`.",
    "fieldname": "ollama_model",
    "fieldtype": "Data",
    "label": "Ollama Model"
