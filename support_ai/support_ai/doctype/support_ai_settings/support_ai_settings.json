@@ -10,6 +10,7 @@
   "column_break_provider",
   "temperature",
   "request_timeout",
+  "max_output_tokens",
   "section_break_ollama",
   "ollama_base_url",
   "ollama_model",
@@ -55,6 +56,13 @@
    "fieldname": "request_timeout",
    "fieldtype": "Int",
    "label": "Request Timeout (seconds)"
+  },
+  {
+   "default": "500",
+   "description": "Hard cap on generated tokens per reply. Without a cap, a small local model can ramble for hundreds of extra tokens instead of giving a concise answer - on CPU-only hardware every extra token is real, slow wall-clock time.",
+   "fieldname": "max_output_tokens",
+   "fieldtype": "Int",
+   "label": "Max Output Tokens"
   },
   {
    "collapsible": 1,

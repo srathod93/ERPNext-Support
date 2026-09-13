@@ -8,7 +8,6 @@ from frappe import _
 
 from support_ai.ai.llm import LLMError, chat_message
 from support_ai.diagnostics.context import build_document_context
-from support_ai.diagnostics.indexer import get_installed_custom_apps_overview
 from support_ai.diagnostics.lookup import LOOKUP_TOOL_SCHEMA, lookup_records
 
 
@@ -66,7 +65,7 @@ def ask(conversation, message, reference_doctype=None, reference_name=None):
 	tools = None if has_reference else [LOOKUP_TOOL_SCHEMA]
 
 	try:
-		reply = run_chat(llm_messages, message, tools=tools)
+		reply = run_chat(llm_messages, tools=tools)
 	except LLMError as e:
 		reply = f"⚠️ Support AI could not get a response: {e}"
 
@@ -76,48 +75,103 @@ def ask(conversation, message, reference_doctype=None, reference_name=None):
 	return {"conversation": convo.name, "reply": reply}
 
 
-def run_chat(llm_messages, user_message, tools=None):
-	assistant_message = chat_message(llm_messages, tools=tools)
-	tool_calls = assistant_message.get("tool_calls") or []
+MAX_TOOL_ROUNDS = 2
+MAX_TOOL_RESULT_CHARS = 3000
 
-	if not tool_calls:
-		return assistant_message.get("content") or "(no response)"
 
-	call = tool_calls[0]
-	if call.get("name") != "lookup_records":
-		return assistant_message.get("content") or "(no response)"
+def run_chat(llm_messages, tools=None):
+	"""Runs a bounded tool-call loop: the model can call lookup_records more
+	than once (e.g. once for GL Entry, once for Journal Entry) before giving
+	its final answer. Tool results are fed back as plain messages rather than
+	provider-specific tool_call/tool-role replay, which differs enough
+	between Ollama and OpenAI-compatible APIs to be a fragile way to get
+	what is, in the end, just extra context for the next turn.
 
-	try:
-		result = lookup_records(**(call.get("arguments") or {}))
-	except Exception as e:
-		result = {"error": str(e)}
+	Critically, the message list sent each round is rebuilt from scratch as
+	base_messages + a capped tool-context block, rather than appended to -
+	on a CPU-only local model, letting tool results accumulate round over
+	round can push the prompt past the model's context window, which was
+	observed to blow up both memory (~5GB RSS for a 3B model) and latency
+	(a single round exceeding 3 minutes) as the runtime pages old context out
+	and back in. Capping and rebuilding keeps every round's prompt bounded."""
+	base_messages = list(llm_messages)
+	original_question = next(
+		(m.get("content") for m in reversed(llm_messages) if m.get("role") == "user"), None
+	)
+	seen_calls = set()
+	all_results = []
 
-	# A fresh, isolated exchange to summarize the tool result in natural
-	# language - avoids replaying provider-specific tool_call/tool-role
-	# message formats, which differ enough between Ollama and OpenAI-
-	# compatible APIs to be a source of fragile bugs for little benefit here.
-	summarize_messages = [
-		{
-			"role": "system",
-			"content": (
-				"You just looked up data for the user via a read-only tool. Answer their question "
-				"directly using ONLY the JSON data given below - never add anything not present in it. "
-				"If the data has an 'error' key, explain that plainly instead."
-			),
-		},
-		{
-			"role": "user",
-			"content": f"Original question: {user_message}\n\nLookup result (JSON):\n{json.dumps(result, default=str, indent=2)}",
-		},
-	]
-	final = chat_message(summarize_messages)
-	return final.get("content") or json.dumps(result, default=str)
+	for _round in range(MAX_TOOL_ROUNDS):
+		messages = base_messages + _tool_context_messages(all_results, original_question)
+		assistant_message = chat_message(messages, tools=tools)
+		tool_calls = assistant_message.get("tool_calls") or []
+
+		if not tool_calls:
+			return assistant_message.get("content") or "(no response)"
+
+		made_new_call = False
+		for call in tool_calls:
+			if call.get("name") != "lookup_records":
+				continue
+
+			args = call.get("arguments") or {}
+			key = json.dumps(args, sort_keys=True, default=str)
+			if key in seen_calls:
+				continue
+			seen_calls.add(key)
+			made_new_call = True
+
+			try:
+				result = lookup_records(**args)
+			except Exception as e:
+				result = {"error": str(e)}
+
+			all_results.append({"called_with": args, "result": result})
+
+		if not made_new_call:
+			# Model tried to repeat a call (or something unsupported) instead of
+			# answering. If we already have real results, force a synthesis of
+			# those below rather than returning a content-free filler line.
+			break
+
+	if not all_results:
+		return "I wasn't able to look that up. Could you rephrase, naming the exact DocType and field you need?"
+
+	# Force a final answer (tools off) from whatever's been gathered so far,
+	# whether we hit the round cap or the model stalled on a repeat call.
+	final_messages = base_messages + _tool_context_messages(all_results, original_question)
+	final = chat_message(final_messages)
+	return final.get("content") or "(no response)"
+
+
+def _tool_context_messages(all_results, original_question):
+	if not all_results:
+		return []
+
+	content = json.dumps(all_results, default=str, indent=2)
+	if len(content) > MAX_TOOL_RESULT_CHARS:
+		content = (
+			content[:MAX_TOOL_RESULT_CHARS]
+			+ f"\n... (truncated, {len(content) - MAX_TOOL_RESULT_CHARS} more chars - ask a narrower "
+			"question, e.g. a smaller limit or an extra filter, for more detail)"
+		)
+
+	messages = [{"role": "system", "content": "Tool results so far:\n" + content}]
+	if original_question:
+		messages.append(
+			{"role": "user", "content": f"Using the tool results above, answer my original question: {original_question}"}
+		)
+	return messages
 
 
 def build_context_payload(reference_doctype, reference_name):
 	if reference_doctype and reference_name:
 		return build_document_context(reference_doctype, reference_name)
-	return {"note": "No specific document referenced.", "installed_custom_apps": get_installed_custom_apps_overview()}
+	# No document referenced: don't preload the full custom-apps/doctypes
+	# overview here - on a small-context local model that alone can be a
+	# large fraction of the available prompt budget, and the lookup_records
+	# tool already lets the model query real doctypes/data on demand instead.
+	return {"note": "No specific document referenced. Use the lookup_records tool for any data question."}
 
 
 @frappe.whitelist()

@@ -39,17 +39,18 @@ def chat_message(messages, tools=None, temperature=None):
 
 	temperature = temperature if temperature is not None else (settings.temperature or 0.2)
 	timeout = settings.request_timeout or 60
+	max_output_tokens = settings.max_output_tokens or 500
 	provider = settings.llm_provider
 
 	if provider == "Ollama":
-		return _chat_ollama(settings, messages, temperature, timeout, tools)
+		return _chat_ollama(settings, messages, temperature, timeout, max_output_tokens, tools)
 	elif provider == "OpenAI Compatible":
-		return _chat_openai_compatible(settings, messages, temperature, timeout, tools)
+		return _chat_openai_compatible(settings, messages, temperature, timeout, max_output_tokens, tools)
 
 	raise LLMError(f"Unsupported LLM provider: {provider}")
 
 
-def _chat_ollama(settings, messages, temperature, timeout, tools):
+def _chat_ollama(settings, messages, temperature, timeout, max_output_tokens, tools):
 	base_url = (settings.ollama_base_url or "http://localhost:11434").rstrip("/")
 	model = settings.ollama_model or "llama3.1"
 
@@ -57,7 +58,12 @@ def _chat_ollama(settings, messages, temperature, timeout, tools):
 		"model": model,
 		"messages": messages,
 		"stream": False,
-		"options": {"temperature": temperature},
+		# num_predict hard-caps generated tokens - without it a small local model
+		# can ramble for hundreds of extra tokens instead of calling a tool or
+		# giving a concise answer, and on CPU-only hardware each of those tokens
+		# is real, slow wall-clock time. Uncapped, this was observed to run past
+		# a 240s timeout generating 800+ tokens of rambling on a single reply.
+		"options": {"temperature": temperature, "num_predict": max_output_tokens},
 	}
 	if tools:
 		payload["tools"] = tools
@@ -84,7 +90,7 @@ def _chat_ollama(settings, messages, temperature, timeout, tools):
 	return {"content": message.get("content"), "tool_calls": tool_calls}
 
 
-def _chat_openai_compatible(settings, messages, temperature, timeout, tools):
+def _chat_openai_compatible(settings, messages, temperature, timeout, max_output_tokens, tools):
 	base_url = (settings.api_base_url or "").rstrip("/")
 	if not base_url:
 		raise LLMError("API Base URL is not configured in Support AI Settings.")
@@ -98,7 +104,7 @@ def _chat_openai_compatible(settings, messages, temperature, timeout, tools):
 	if api_key:
 		headers["Authorization"] = f"Bearer {api_key}"
 
-	payload = {"model": model, "messages": messages, "temperature": temperature}
+	payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_output_tokens}
 	if tools:
 		payload["tools"] = tools
 

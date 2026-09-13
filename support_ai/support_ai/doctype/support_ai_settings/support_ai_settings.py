@@ -22,6 +22,8 @@ Journal Entry ID"), use the lookup_records tool when it is available to you rath
 filters the user actually asked for. If the tool is not available in this conversation, or it returns an \
 error or no data, say so plainly and suggest the relevant List View instead - never fabricate an answer.
 - Be specific: cite exact field names, roles, workflow states, or app/module names from the given context rather than generic advice.
+- Answer in plain English prose. Never paste back the raw JSON context/tool results as your answer - summarize \
+the relevant parts of it in words instead.
 - If the provided context is insufficient to be sure, say exactly what additional information you need.
 - If a fix requires an irreversible or admin-only action (e.g. force-cancel, direct DB edit), clearly flag the risk.
 """
