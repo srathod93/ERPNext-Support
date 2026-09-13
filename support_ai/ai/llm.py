@@ -19,7 +19,19 @@ def get_settings():
 
 
 def chat(messages, temperature=None):
-	"""messages: list of {"role": "system"|"user"|"assistant", "content": str}"""
+	"""messages: list of {"role": "system"|"user"|"assistant", "content": str}
+	Returns the reply text. Use chat_message() instead if you passed tools."""
+	message = chat_message(messages, temperature=temperature)
+	content = message.get("content")
+	if not content:
+		raise LLMError("The model returned an empty response.")
+	return content
+
+
+def chat_message(messages, tools=None, temperature=None):
+	"""Returns the raw assistant message as {"content": str|None, "tool_calls":
+	[{"name": str, "arguments": dict}, ...]}. tool_calls is always a list
+	(empty if the model didn't call a tool, which is the common case)."""
 	settings = get_settings()
 
 	if not settings.is_enabled:
@@ -30,28 +42,28 @@ def chat(messages, temperature=None):
 	provider = settings.llm_provider
 
 	if provider == "Ollama":
-		return _chat_ollama(settings, messages, temperature, timeout)
+		return _chat_ollama(settings, messages, temperature, timeout, tools)
 	elif provider == "OpenAI Compatible":
-		return _chat_openai_compatible(settings, messages, temperature, timeout)
+		return _chat_openai_compatible(settings, messages, temperature, timeout, tools)
 
 	raise LLMError(f"Unsupported LLM provider: {provider}")
 
 
-def _chat_ollama(settings, messages, temperature, timeout):
+def _chat_ollama(settings, messages, temperature, timeout, tools):
 	base_url = (settings.ollama_base_url or "http://localhost:11434").rstrip("/")
 	model = settings.ollama_model or "llama3.1"
 
+	payload = {
+		"model": model,
+		"messages": messages,
+		"stream": False,
+		"options": {"temperature": temperature},
+	}
+	if tools:
+		payload["tools"] = tools
+
 	try:
-		response = requests.post(
-			f"{base_url}/api/chat",
-			json={
-				"model": model,
-				"messages": messages,
-				"stream": False,
-				"options": {"temperature": temperature},
-			},
-			timeout=timeout,
-		)
+		response = requests.post(f"{base_url}/api/chat", json=payload, timeout=timeout)
 		response.raise_for_status()
 	except requests.RequestException as e:
 		frappe.log_error(title="Support AI: Ollama request failed", message=frappe.get_traceback())
@@ -61,13 +73,18 @@ def _chat_ollama(settings, messages, temperature, timeout):
 		)
 
 	data = response.json()
-	content = (data.get("message") or {}).get("content")
-	if not content:
-		raise LLMError("Ollama returned an empty response.")
-	return content
+	message = data.get("message") or {}
+
+	tool_calls = []
+	for tc in message.get("tool_calls") or []:
+		fn = tc.get("function") or {}
+		# Ollama already gives arguments as a dict.
+		tool_calls.append({"name": fn.get("name"), "arguments": fn.get("arguments") or {}})
+
+	return {"content": message.get("content"), "tool_calls": tool_calls}
 
 
-def _chat_openai_compatible(settings, messages, temperature, timeout):
+def _chat_openai_compatible(settings, messages, temperature, timeout, tools):
 	base_url = (settings.api_base_url or "").rstrip("/")
 	if not base_url:
 		raise LLMError("API Base URL is not configured in Support AI Settings.")
@@ -81,13 +98,12 @@ def _chat_openai_compatible(settings, messages, temperature, timeout):
 	if api_key:
 		headers["Authorization"] = f"Bearer {api_key}"
 
+	payload = {"model": model, "messages": messages, "temperature": temperature}
+	if tools:
+		payload["tools"] = tools
+
 	try:
-		response = requests.post(
-			f"{base_url}/chat/completions",
-			headers=headers,
-			json={"model": model, "messages": messages, "temperature": temperature},
-			timeout=timeout,
-		)
+		response = requests.post(f"{base_url}/chat/completions", headers=headers, json=payload, timeout=timeout)
 		response.raise_for_status()
 	except requests.RequestException as e:
 		frappe.log_error(title="Support AI: API request failed", message=frappe.get_traceback())
@@ -95,10 +111,20 @@ def _chat_openai_compatible(settings, messages, temperature, timeout):
 
 	data = response.json()
 	try:
-		content = data["choices"][0]["message"]["content"]
+		message = data["choices"][0]["message"]
 	except (KeyError, IndexError):
 		raise LLMError("Received an unexpected response shape from the API.")
 
-	if not content:
-		raise LLMError("The API returned an empty response.")
-	return content
+	tool_calls = []
+	for tc in message.get("tool_calls") or []:
+		fn = tc.get("function") or {}
+		args = fn.get("arguments")
+		# OpenAI-compatible APIs give arguments as a JSON string, not a dict.
+		if isinstance(args, str):
+			try:
+				args = frappe.parse_json(args)
+			except Exception:
+				args = {}
+		tool_calls.append({"name": fn.get("name"), "arguments": args or {}})
+
+	return {"content": message.get("content"), "tool_calls": tool_calls}
