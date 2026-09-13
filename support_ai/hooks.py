@@ -25,7 +25,8 @@ app_license = "mit"
 # ------------------
 
 # include js, css files in header of desk.html
-app_include_js = "/assets/support_ai/js/support_ai_form_button.js"
+app_include_js = ["/assets/support_ai/js/support_ai_widget.js", "/assets/support_ai/js/support_ai_form_button.js"]
+app_include_css = "/assets/support_ai/css/support_ai_widget.css"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/support_ai/css/support_ai.css"
