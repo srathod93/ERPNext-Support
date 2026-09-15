@@ -25,8 +25,20 @@ app_license = "mit"
 # ------------------
 
 # include js, css files in header of desk.html
-app_include_js = ["/assets/support_ai/js/support_ai_widget.js", "/assets/support_ai/js/support_ai_form_button.js"]
-app_include_css = "/assets/support_ai/css/support_ai_widget.css"
+#
+# NOTE: these are plain /assets/... paths, not a bundled .bundle.js entry, so
+# Frappe's normal cache-busting (a content hash from assets.json) never
+# applies to them - the server also sends Cache-Control: max-age=43200 (12h)
+# on static files. Without a versioned query string, a browser can keep
+# serving a stale cached copy for up to 12 hours even across normal reloads.
+# ASSET_VERSION below is the cache-buster: bump it on every edit to either
+# file below, or changes won't reliably reach already-open browser tabs.
+ASSET_VERSION = "4"
+app_include_js = [
+	f"/assets/support_ai/js/support_ai_widget.js?v={ASSET_VERSION}",
+	f"/assets/support_ai/js/support_ai_form_button.js?v={ASSET_VERSION}",
+]
+app_include_css = f"/assets/support_ai/css/support_ai_widget.css?v={ASSET_VERSION}"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/support_ai/css/support_ai.css"

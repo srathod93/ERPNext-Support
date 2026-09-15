@@ -109,6 +109,13 @@ support_ai.Widget = class {
 			}
 		});
 
+		// Always-works fallback: closes the panel no matter what state the
+		// header buttons are in (a stale cached JS bundle, or any future
+		// rendering bug, shouldn't be able to trap someone with no way out).
+		$(document).on("keydown.support_ai_esc", (e) => {
+			if (e.key === "Escape" && this.is_open) this.toggle(false);
+		});
+
 		this.setup_drag();
 	}
 
