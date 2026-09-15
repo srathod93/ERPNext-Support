@@ -80,7 +80,15 @@ LOOKUP_TOOL_SCHEMA = {
 
 def lookup_records(doctype=None, filters=None, order_by=None, limit=None):
 	if not doctype or not frappe.db.exists("DocType", doctype):
-		return {"error": f"{doctype!r} is not a valid DocType name. Pass a real Frappe DocType like 'GL Entry' or 'Journal Entry' - not a record name or value."}
+		hint = ""
+		if filters and isinstance(filters, dict) and "account" in filters:
+			hint = " You are looking up an account's transactions - call this again with doctype='GL Entry' instead (keep the same filters)."
+		elif doctype and any(w in doctype.lower() for w in ("account", "transaction", "ledger", "gl")):
+			hint = " Did you mean doctype='GL Entry'? That is the correct DocType for ledger/account transactions."
+		return {
+			"error": f"{doctype!r} is not a valid DocType name. Pass a real Frappe DocType like 'GL Entry' or "
+			f"'Journal Entry' - not a record name or value.{hint} Retry the call with a corrected doctype."
+		}
 
 	if not frappe.has_permission(doctype, "read"):
 		return {"error": f"You do not have permission to read {doctype}."}
@@ -177,18 +185,38 @@ def lookup_records(doctype=None, filters=None, order_by=None, limit=None):
 			fields.append(df.fieldname)
 	fields = fields[:FETCH_FIELDS_CAP]
 
-	rows = frappe.get_list(
-		doctype,
-		filters=clean_filters,
-		fields=fields,
-		order_by=f"{order_field} {order_direction}",
-		limit_page_length=limit,
-	)
+	def _run(f):
+		return frappe.get_list(
+			doctype, filters=f, fields=fields, order_by=f"{order_field} {order_direction}", limit_page_length=limit
+		)
+
+	rows = _run(clean_filters)
+
+	# Exact-match filters on Link/Data fields (e.g. Account's primary key
+	# embeds a company abbreviation: "1081001 - Preference Share Cap - JIASL")
+	# frequently come back truncated or paraphrased by the model. Rather than
+	# rely on the model getting the exact string right, fall back to a
+	# partial match on any string filter before giving up empty-handed.
+	used_partial_match = False
+	if not rows and clean_filters:
+		like_filters = {
+			k: ["like", f"%{v}%"] if isinstance(v, str) else v for k, v in clean_filters.items()
+		}
+		if like_filters != clean_filters:
+			partial_rows = _run(like_filters)
+			if partial_rows:
+				rows = partial_rows
+				used_partial_match = True
 
 	rows = _drop_uninformative_columns(rows, always_keep={"name", "creation", "modified"}, display_cap=MAX_FIELDS)
 
 	result = {"doctype": doctype, "filters_applied": clean_filters, "count": len(rows), "records": rows}
 	warnings = []
+	if used_partial_match:
+		warnings.append(
+			f"No exact match for {clean_filters} on {doctype} - these are a PARTIAL/contains match instead. "
+			"Tell the user this wasn't an exact match."
+		)
 	if filters_unparseable:
 		warnings.append(
 			f"The filters argument could not be parsed and was IGNORED entirely - these {doctype} results "

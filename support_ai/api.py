@@ -102,7 +102,7 @@ def run_chat(llm_messages, tools=None):
 	all_results = []
 
 	for _round in range(MAX_TOOL_ROUNDS):
-		messages = base_messages + _tool_context_messages(all_results, original_question)
+		messages = base_messages + _tool_context_messages(all_results, original_question, allow_retry=True)
 		assistant_message = chat_message(messages, tools=tools)
 		tool_calls = assistant_message.get("tool_calls") or []
 
@@ -139,12 +139,12 @@ def run_chat(llm_messages, tools=None):
 
 	# Force a final answer (tools off) from whatever's been gathered so far,
 	# whether we hit the round cap or the model stalled on a repeat call.
-	final_messages = base_messages + _tool_context_messages(all_results, original_question)
+	final_messages = base_messages + _tool_context_messages(all_results, original_question, allow_retry=False)
 	final = chat_message(final_messages)
 	return final.get("content") or "(no response)"
 
 
-def _tool_context_messages(all_results, original_question):
+def _tool_context_messages(all_results, original_question, allow_retry):
 	if not all_results:
 		return []
 
@@ -158,8 +158,15 @@ def _tool_context_messages(all_results, original_question):
 
 	messages = [{"role": "system", "content": "Tool results so far:\n" + content}]
 	if original_question:
+		instruction = (
+			f"Using the tool results above, answer my original question: {original_question}\n"
+			"If a result above has an 'error' with a suggested fix, call the tool again with that "
+			"correction instead of answering yet."
+			if allow_retry
+			else f"Using the tool results above, answer my original question now: {original_question}"
+		)
 		messages.append(
-			{"role": "user", "content": f"Using the tool results above, answer my original question: {original_question}"}
+			{"role": "user", "content": instruction}
 		)
 	return messages
 
