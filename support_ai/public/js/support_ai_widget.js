@@ -211,6 +211,7 @@ support_ai.Widget = class {
 	toggle(force) {
 		this.is_open = force !== undefined ? force : !this.is_open;
 		this.$panel.toggleClass("support-ai-panel-open", this.is_open);
+		this.$bubble.toggle(!this.is_open);
 		if (this.is_open) {
 			if (!this.normal_rect) {
 				// First open: dock bottom-right at the default size.
