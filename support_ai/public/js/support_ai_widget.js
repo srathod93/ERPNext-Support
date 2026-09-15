@@ -4,6 +4,21 @@ const SUPPORT_AI_BUBBLE_SVG = `<svg viewBox="0 0 24 24" fill="none" xmlns="http:
 	<path d="M4 4h16v12H7l-3 3V4z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" fill="none"/>
 </svg>`;
 
+// Real inline SVGs rather than Unicode glyphs (▢ ❐ ▣ etc.) - those rely on
+// the OS/browser having a glyph for that exact codepoint and were observed
+// to render as blank in the header, which is why the buttons "disappeared".
+const ICONS = {
+	history: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+	plus: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+	minimize: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="19" x2="19" y2="19"/></svg>`,
+	maximize: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="5" width="14" height="14" rx="1.5"/></svg>`,
+	restore: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="7" y="7" width="11" height="11" rx="1.2"/><path d="M7 4.5h9.5A2 2 0 0 1 18.5 6.5V16" stroke-linecap="round"/></svg>`,
+	close: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>`,
+	edit: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`,
+	search: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65" stroke-linecap="round"/></svg>`,
+	back: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`,
+};
+
 const DEFAULT_WIDTH = 400;
 const DEFAULT_HEIGHT = 560;
 const MINIMIZED_HEIGHT = 48;
@@ -14,6 +29,7 @@ support_ai.Widget = class {
 		this.is_open = false;
 		this.is_minimized = false;
 		this.is_maximized = false;
+		this.is_history_open = false;
 		this.reference_doctype = null;
 		this.reference_name = null;
 		this.normal_rect = null; // {left, top, width, height} saved across maximize/minimize
@@ -30,17 +46,22 @@ support_ai.Widget = class {
 				<div class="support-ai-panel-header">
 					<div class="support-ai-title">${__("Support AI")}</div>
 					<div class="support-ai-context"></div>
-					<button class="support-ai-icon-btn support-ai-search-btn" title="${__("Search chat history")}">&#128269;</button>
-					<button class="support-ai-icon-btn support-ai-new-btn" title="${__("New Conversation")}">+</button>
-					<button class="support-ai-icon-btn support-ai-minimize-btn" title="${__("Minimize")}">&#8211;</button>
-					<button class="support-ai-icon-btn support-ai-maximize-btn" title="${__("Maximize")}">&#9633;</button>
-					<button class="support-ai-icon-btn support-ai-close-btn" title="${__("Close")}">&times;</button>
+					<button class="support-ai-icon-btn support-ai-history-btn" title="${__("Chat history")}">${ICONS.history}</button>
+					<button class="support-ai-icon-btn support-ai-new-btn" title="${__("New Conversation")}">${ICONS.plus}</button>
+					<button class="support-ai-icon-btn support-ai-minimize-btn" title="${__("Minimize")}">${ICONS.minimize}</button>
+					<button class="support-ai-icon-btn support-ai-maximize-btn" title="${__("Maximize")}">${ICONS.maximize}</button>
+					<button class="support-ai-icon-btn support-ai-close-btn" title="${__("Close")}">${ICONS.close}</button>
 				</div>
-				<div class="support-ai-search-bar">
-					<input type="text" placeholder="${__("Search your chat history...")}" />
-					<button class="support-ai-icon-btn support-ai-search-close-btn" title="${__("Close search")}">&times;</button>
+				<div class="support-ai-history-panel">
+					<div class="support-ai-history-toolbar">
+						<button class="support-ai-icon-btn support-ai-history-back-btn" title="${__("Back to chat")}">${ICONS.back}</button>
+						<div class="support-ai-history-search-box">
+							${ICONS.search}
+							<input type="text" placeholder="${__("Search your chat history...")}" />
+						</div>
+					</div>
+					<div class="support-ai-history-list"></div>
 				</div>
-				<div class="support-ai-search-results"></div>
 				<div class="support-ai-body">
 					<div class="support-ai-messages"></div>
 					<div class="support-ai-input-row">
@@ -56,9 +77,9 @@ support_ai.Widget = class {
 		this.$messages = this.$panel.find(".support-ai-messages");
 		this.$context = this.$panel.find(".support-ai-context");
 		this.$input = this.$panel.find(".support-ai-input-row textarea");
-		this.$searchBar = this.$panel.find(".support-ai-search-bar");
-		this.$searchInput = this.$searchBar.find("input");
-		this.$searchResults = this.$panel.find(".support-ai-search-results");
+		this.$historyPanel = this.$panel.find(".support-ai-history-panel");
+		this.$historyInput = this.$historyPanel.find("input");
+		this.$historyList = this.$panel.find(".support-ai-history-list");
 		this.$minimizeBtn = this.$panel.find(".support-ai-minimize-btn");
 		this.$maximizeBtn = this.$panel.find(".support-ai-maximize-btn");
 
@@ -74,9 +95,9 @@ support_ai.Widget = class {
 			e.stopPropagation();
 			this.set_maximized(!this.is_maximized);
 		});
-		this.$panel.find(".support-ai-search-btn").on("click", () => this.toggle_search(true));
-		this.$panel.find(".support-ai-search-close-btn").on("click", () => this.toggle_search(false));
-		this.$searchInput.on(
+		this.$panel.find(".support-ai-history-btn").on("click", () => this.toggle_history(true));
+		this.$panel.find(".support-ai-history-back-btn").on("click", () => this.toggle_history(false));
+		this.$historyInput.on(
 			"input",
 			frappe.utils.debounce(() => this.run_search(), 300)
 		);
@@ -151,10 +172,12 @@ support_ai.Widget = class {
 			this.normal_rect = this.current_rect();
 			this.$panel.css("height", MINIMIZED_HEIGHT + "px");
 			this.$body.hide();
-			this.$minimizeBtn.html("&#9723;").attr("title", __("Restore"));
+			this.$historyPanel.hide();
+			this.$minimizeBtn.html(ICONS.restore).attr("title", __("Restore"));
 		} else {
-			this.$body.show();
-			this.$minimizeBtn.html("&#8211;").attr("title", __("Minimize"));
+			if (this.is_history_open) this.$historyPanel.show();
+			else this.$body.show();
+			this.$minimizeBtn.html(ICONS.minimize).attr("title", __("Minimize"));
 			if (this.normal_rect) this.$panel.css("height", this.normal_rect.height + "px");
 		}
 	}
@@ -165,10 +188,15 @@ support_ai.Widget = class {
 
 		if (maximized) {
 			this.normal_rect = this.current_rect();
-			this.apply_rect({ left: window.innerWidth * 0.05, top: window.innerHeight * 0.05, width: window.innerWidth * 0.9, height: window.innerHeight * 0.9 });
-			this.$maximizeBtn.html("&#10064;").attr("title", __("Restore"));
+			this.apply_rect({
+				left: window.innerWidth * 0.05,
+				top: window.innerHeight * 0.05,
+				width: window.innerWidth * 0.9,
+				height: window.innerHeight * 0.9,
+			});
+			this.$maximizeBtn.html(ICONS.restore).attr("title", __("Restore"));
 		} else {
-			this.$maximizeBtn.html("&#9633;").attr("title", __("Maximize"));
+			this.$maximizeBtn.html(ICONS.maximize).attr("title", __("Maximize"));
 			if (this.normal_rect) this.apply_rect(this.normal_rect);
 		}
 	}
@@ -193,41 +221,44 @@ support_ai.Widget = class {
 		}
 	}
 
-	// --- Search --------------------------------------------------------------
+	// --- History / search --------------------------------------------------
 
-	toggle_search(show) {
-		this.$searchBar.toggleClass("support-ai-search-open", show);
-		this.$searchResults.empty().hide();
+	toggle_history(show) {
+		this.is_history_open = show;
+		this.$historyPanel.toggle(show);
+		this.$body.toggle(!show);
 		if (show) {
-			this.$searchInput.val("").trigger("focus");
+			this.$historyInput.val("");
+			this.run_search();
+			this.$historyInput.trigger("focus");
 		}
 	}
 
 	run_search() {
-		const query = (this.$searchInput.val() || "").trim();
+		const query = (this.$historyInput.val() || "").trim();
 		frappe.call({
 			method: "support_ai.api.search_conversations",
 			args: { query },
 			callback: (r) => {
-				this.$searchResults.empty();
+				this.$historyList.empty();
 				const results = r.message || [];
 				if (!results.length) {
-					this.$searchResults.append(`<div class="support-ai-search-empty">${__("No matches")}</div>`);
+					this.$historyList.append(`<div class="support-ai-history-empty">${__("No conversations found")}</div>`);
+					return;
 				}
 				results.forEach((c) => {
 					const $item = $(`
-						<div class="support-ai-search-item">
-							<div class="support-ai-search-item-title">${frappe.utils.escape_html(c.title || c.name)}</div>
-							<div class="support-ai-search-item-meta">${frappe.datetime.comment_when(c.modified)}</div>
+						<div class="support-ai-history-item">
+							<div class="support-ai-history-item-title">${frappe.utils.escape_html(c.title || c.name)}</div>
+							<div class="support-ai-history-item-meta">${frappe.datetime.comment_when(c.modified)}</div>
 						</div>
 					`);
 					$item.on("click", () => {
 						this.load_conversation(c.name);
-						this.toggle_search(false);
+						this.toggle_history(false);
 					});
-					this.$searchResults.append($item);
+					this.$historyList.append($item);
 				});
-				this.$searchResults.show();
 			},
 		});
 	}
@@ -366,7 +397,7 @@ support_ai.Widget = class {
 
 		const $row = $(`
 			<div class="support-ai-msg-row ${is_user ? "support-ai-msg-user" : "support-ai-msg-assistant"}">
-				${editable ? `<button class="support-ai-edit-btn" title="${__("Edit and resend")}">&#9998;</button>` : ""}
+				${editable ? `<button class="support-ai-edit-btn" title="${__("Edit and resend")}">${ICONS.edit}</button>` : ""}
 				<div class="support-ai-msg-bubble"></div>
 			</div>
 		`);
