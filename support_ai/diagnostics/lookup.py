@@ -128,9 +128,16 @@ def lookup_records(doctype=None, filters=None, order_by=None, limit=None):
 	standard_fields = {"name", "creation", "modified", "owner", "modified_by", "docstatus"}
 	valid_fields = {df.fieldname for df in meta.fields} | standard_fields
 
+	# Placeholder/garbage values the model sometimes emits when it doesn't
+	# actually have a real value in mind (e.g. filters={'creation': 'None'})
+	# would otherwise silently become an impossible exact-match condition.
+	PLACEHOLDER_VALUES = {"none", "null", "n/a", "na", "unknown", ""}
+
 	clean_filters = {}
 	ignored_filters = {}
 	for k, v in filters.items():
+		if isinstance(v, str) and v.strip().lower() in PLACEHOLDER_VALUES:
+			continue
 		if k in valid_fields:
 			clean_filters[k] = v
 		else:
@@ -224,9 +231,21 @@ def lookup_records(doctype=None, filters=None, order_by=None, limit=None):
 			"to rephrase, e.g. naming the exact field and value."
 		)
 	if ignored_filters:
+		# The model has no visibility into a doctype's real schema before
+		# calling this tool, so a wrong field name (e.g. guessing 'status'
+		# on User, whose actual field is the Check 'enabled') is a dead end
+		# unless it's told what the real field names are - list the doctype's
+		# actual Check/Select fields plus its Data/Link fields as a concrete
+		# hint for retrying, rather than just saying the guess was wrong.
+		candidate_fields = [
+			df.fieldname
+			for df in meta.fields
+			if df.fieldtype in ("Check", "Select", "Data", "Link") and not df.hidden
+		][:20]
 		warnings.append(
 			f"These filter fields do not exist on {doctype} and were ignored (results are NOT filtered by "
-			f"them): {ignored_filters}. Tell the user their {doctype} result may be broader than requested."
+			f"them): {ignored_filters}. This {doctype}'s actual filterable fields include: {candidate_fields}. "
+			"Call this tool again with the correct fieldname instead of presenting these broader results as filtered."
 		)
 	if warnings:
 		result["warning"] = " ".join(warnings)
