@@ -33,7 +33,7 @@ app_license = "mit"
 # serving a stale cached copy for up to 12 hours even across normal reloads.
 # ASSET_VERSION below is the cache-buster: bump it on every edit to either
 # file below, or changes won't reliably reach already-open browser tabs.
-ASSET_VERSION = "5"
+ASSET_VERSION = "6"
 app_include_js = [
 	f"/assets/support_ai/js/support_ai_widget.js?v={ASSET_VERSION}",
 	f"/assets/support_ai/js/support_ai_form_button.js?v={ASSET_VERSION}",

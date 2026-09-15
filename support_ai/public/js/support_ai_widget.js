@@ -214,10 +214,13 @@ support_ai.Widget = class {
 		this.$bubble.toggle(!this.is_open);
 		if (this.is_open) {
 			if (!this.normal_rect) {
-				// First open: dock bottom-right at the default size.
+				// First open: dock bottom-right at the default size, flush
+				// with the same margin the bubble itself uses (the bubble
+				// is hidden while open, so there's no need to leave extra
+				// room below the panel for it).
 				this.$panel.css({
 					right: "24px",
-					bottom: "90px",
+					bottom: "24px",
 					left: "auto",
 					top: "auto",
 					width: DEFAULT_WIDTH + "px",

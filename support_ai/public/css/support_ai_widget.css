@@ -24,11 +24,14 @@
 }
 
 /* Position/size (left/top/width/height) are set dynamically from JS - drag,
-   minimize and maximize all just rewrite these inline styles. Only the
-   open/closed visibility toggle lives in CSS. */
+   minimize and maximize all just rewrite these inline styles. display stays
+   flex at all times (position:fixed elements don't take up layout space
+   either way) so that opening/closing can transition smoothly - toggling
+   display:none/flex can't be animated, which is why open/close used to
+   snap instantly instead of sliding. */
 .support-ai-panel {
 	position: fixed;
-	display: none;
+	display: flex;
 	flex-direction: column;
 	min-width: 280px;
 	min-height: 200px;
@@ -41,9 +44,15 @@
 	box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
 	z-index: 1039;
 	overflow: hidden;
+	opacity: 0;
+	transform: translateY(24px);
+	pointer-events: none;
+	transition: opacity 0.18s ease, transform 0.18s ease;
 }
 .support-ai-panel.support-ai-panel-open {
-	display: flex;
+	opacity: 1;
+	transform: translateY(0);
+	pointer-events: auto;
 }
 
 .support-ai-panel-header {
