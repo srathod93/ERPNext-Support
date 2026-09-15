@@ -193,7 +193,52 @@ def list_conversations():
 
 
 @frappe.whitelist()
+def search_conversations(query=""):
+	"""Searches the current user's own conversation titles and message
+	content. Always scoped to frappe.session.user (same as list_conversations)
+	even though this runs as raw SQL, so it can never surface another user's
+	chat history."""
+	query = (query or "").strip()
+	if not query:
+		return list_conversations()
+
+	return frappe.db.sql(
+		"""
+		select c.name, c.title, c.status, c.reference_doctype, c.reference_name, c.modified
+		from `tabSupport AI Conversation` c
+		where c.user = %(user)s
+		  and (
+		  	c.title like %(like)s
+		  	or exists (
+		  		select 1 from `tabSupport AI Message` m
+		  		where m.parent = c.name and m.content like %(like)s
+		  	)
+		  )
+		order by c.modified desc
+		limit 50
+		""",
+		{"user": frappe.session.user, "like": f"%{query}%"},
+		as_dict=True,
+	)
+
+
+@frappe.whitelist()
 def get_conversation(name):
 	convo = frappe.get_doc("Support AI Conversation", name)
 	convo.check_permission("read")
 	return convo
+
+
+@frappe.whitelist()
+def edit_message(conversation, keep_count):
+	"""Drops every message from index keep_count onward, so a user can edit
+	an earlier prompt and get a fresh reply instead of appending after now-
+	stale history. The caller is expected to resend the edited text via
+	ask() right after this, which appends it as a new message as usual."""
+	keep_count = int(keep_count)
+	convo = frappe.get_doc("Support AI Conversation", conversation)
+	convo.check_permission("write")
+
+	convo.set("messages", convo.messages[:keep_count])
+	convo.save(ignore_permissions=False)
+	return {"conversation": convo.name}
