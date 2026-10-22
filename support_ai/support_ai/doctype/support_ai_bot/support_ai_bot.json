@@ -1,0 +1,289 @@
+{
+ "actions": [],
+ "creation": "2026-10-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bot_name",
+  "enabled",
+  "description",
+  "column_break_main",
+  "allowed_roles",
+  "debug_mode",
+  "section_break_model",
+  "provider",
+  "model",
+  "engine",
+  "column_break_model",
+  "temperature",
+  "top_p",
+  "max_output_tokens",
+  "reasoning_effort",
+  "section_break_instructions",
+  "instruction_template",
+  "dynamic_instructions",
+  "replace_system_prompt",
+  "instruction",
+  "section_break_tools",
+  "include_lookup_tool",
+  "include_diagnostic_context",
+  "allow_write_actions",
+  "functions",
+  "section_break_knowledge",
+  "enable_file_search",
+  "knowledge_files",
+  "openai_vector_store_id",
+  "section_break_hosted",
+  "enable_code_interpreter",
+  "column_break_hosted",
+  "enable_web_search",
+  "section_break_docai",
+  "use_google_document_ai",
+  "google_processor_id"
+ ],
+ "fields": [
+  {
+   "fieldname": "bot_name",
+   "fieldtype": "Data",
+   "label": "Bot Name",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "1",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description",
+   "description": "Shown to users when they pick a bot."
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "allowed_roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Allowed Roles",
+   "options": "Support AI Allowed Role",
+   "description": "Leave empty to let every desk user use this bot."
+  },
+  {
+   "fieldname": "debug_mode",
+   "fieldtype": "Check",
+   "label": "Debug Mode",
+   "description": "Store tool calls, arguments and raw errors on each reply and show them in the chat."
+  },
+  {
+   "fieldname": "section_break_model",
+   "fieldtype": "Section Break",
+   "label": "Model"
+  },
+  {
+   "fieldname": "provider",
+   "fieldtype": "Select",
+   "label": "Provider",
+   "options": "\nOllama\nOpenAI\nOpenAI Compatible\nLM Studio\nLocalAI",
+   "description": "Leave empty to use the provider set in Support AI Settings."
+  },
+  {
+   "fieldname": "model",
+   "fieldtype": "Data",
+   "label": "Model",
+   "description": "Leave empty to use the provider's model from Support AI Settings."
+  },
+  {
+   "fieldname": "engine",
+   "fieldtype": "Select",
+   "label": "Engine",
+   "options": "Built-in\nOpenAI Agents SDK",
+   "default": "Built-in",
+   "description": "Built-in: lightweight loop tuned for small local models. OpenAI Agents SDK: required for Code Interpreter, Web Search and OpenAI vector-store File Search."
+  },
+  {
+   "fieldname": "column_break_model",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "temperature",
+   "fieldtype": "Float",
+   "label": "Temperature",
+   "description": "Empty = Settings value."
+  },
+  {
+   "fieldname": "top_p",
+   "fieldtype": "Float",
+   "label": "Top P"
+  },
+  {
+   "fieldname": "max_output_tokens",
+   "fieldtype": "Int",
+   "label": "Max Output Tokens",
+   "description": "Empty = Settings value."
+  },
+  {
+   "fieldname": "reasoning_effort",
+   "fieldtype": "Select",
+   "label": "Reasoning Effort",
+   "options": "\nlow\nmedium\nhigh",
+   "description": "Only for reasoning models (e.g. OpenAI o-series / gpt-5). Leave empty for normal models."
+  },
+  {
+   "fieldname": "section_break_instructions",
+   "fieldtype": "Section Break",
+   "label": "Instructions"
+  },
+  {
+   "fieldname": "instruction_template",
+   "fieldtype": "Link",
+   "label": "Instruction Template",
+   "options": "Support AI Instruction Template"
+  },
+  {
+   "fieldname": "dynamic_instructions",
+   "fieldtype": "Check",
+   "label": "Dynamic Instructions",
+   "description": "Render the instruction as Jinja: {{ first_name }}, {{ full_name }}, {{ email }}, {{ user_id }}, {{ roles }}, {{ company }}, {{ employee_id }}, {{ department }}, {{ employee_company }}, {{ lang }}, {{ today }}, {{ now }}, {{ reference_doctype }}, {{ reference_name }}."
+  },
+  {
+   "fieldname": "replace_system_prompt",
+   "fieldtype": "Check",
+   "label": "Replace Default System Prompt",
+   "description": "Use only this bot's instruction. Otherwise it is added after the system prompt from Support AI Settings."
+  },
+  {
+   "fieldname": "instruction",
+   "fieldtype": "Long Text",
+   "label": "Instruction"
+  },
+  {
+   "fieldname": "section_break_tools",
+   "fieldtype": "Section Break",
+   "label": "Functions"
+  },
+  {
+   "fieldname": "include_lookup_tool",
+   "fieldtype": "Check",
+   "label": "Include Built-in Record Lookup",
+   "default": "1",
+   "description": "The read-only lookup_records tool for find/list/latest questions."
+  },
+  {
+   "fieldname": "include_diagnostic_context",
+   "fieldtype": "Check",
+   "label": "Include Document Diagnostics",
+   "default": "1",
+   "description": "Send permissions, workflow, error logs and custom code of the referenced document."
+  },
+  {
+   "fieldname": "allow_write_actions",
+   "fieldtype": "Check",
+   "label": "Allow Write Actions",
+   "description": "Allow functions that create/update/delete/submit/cancel documents. They still only run for users who have the Support AI write role AND normal DocType permission. Every write is recorded in Support AI Action Log."
+  },
+  {
+   "fieldname": "functions",
+   "fieldtype": "Table",
+   "label": "Functions",
+   "options": "Support AI Bot Function"
+  },
+  {
+   "fieldname": "section_break_knowledge",
+   "fieldtype": "Section Break",
+   "label": "Knowledge Base (File Search)",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "enable_file_search",
+   "fieldtype": "Check",
+   "label": "Enable File Search",
+   "description": "Answer from the files below. With OpenAI + Agents SDK the files are synced to an OpenAI vector store; with any other provider they are searched locally on this server."
+  },
+  {
+   "fieldname": "knowledge_files",
+   "fieldtype": "Table",
+   "label": "Knowledge Files",
+   "options": "Support AI Knowledge File",
+   "depends_on": "enable_file_search"
+  },
+  {
+   "fieldname": "openai_vector_store_id",
+   "fieldtype": "Data",
+   "label": "OpenAI Vector Store ID",
+   "read_only": 1,
+   "depends_on": "enable_file_search"
+  },
+  {
+   "fieldname": "section_break_hosted",
+   "fieldtype": "Section Break",
+   "label": "OpenAI Hosted Tools",
+   "collapsible": 1,
+   "description": "Require Provider = OpenAI and Engine = OpenAI Agents SDK."
+  },
+  {
+   "fieldname": "enable_code_interpreter",
+   "fieldtype": "Check",
+   "label": "Enable Code Interpreter"
+  },
+  {
+   "fieldname": "column_break_hosted",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "enable_web_search",
+   "fieldtype": "Check",
+   "label": "Enable Web Search"
+  },
+  {
+   "fieldname": "section_break_docai",
+   "fieldtype": "Section Break",
+   "label": "Attachments / Google Document AI",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "use_google_document_ai",
+   "fieldtype": "Check",
+   "label": "Use Google Document AI for Attachments",
+   "description": "OCR / parse attached images and PDFs with Google Document AI (configure credentials in Support AI Settings)."
+  },
+  {
+   "fieldname": "google_processor_id",
+   "fieldtype": "Data",
+   "label": "Document AI Processor ID",
+   "depends_on": "use_google_document_ai",
+   "description": "Empty = default processor from Support AI Settings."
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Support AI",
+ "name": "Support AI Bot",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "field:bot_name",
+ "naming_rule": "By fieldname",
+ "track_changes": 1
+}

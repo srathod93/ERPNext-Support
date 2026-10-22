@@ -5,6 +5,15 @@ app_description = "AI-powered self-hosted diagnostic support assistant for Frapp
 app_email = "shyam@8848digital.com"
 app_license = "mit"
 
+custom_fixtures = [
+	{
+		"dt": "Custom Field",
+		"filters": {"module": ["in", ["Support AI"]]},
+	}
+]
+
+commands = ["support_ai.commands.export_fixtures.export_fixtures"]
+
 # Apps
 # ------------------
 
@@ -33,11 +42,16 @@ app_license = "mit"
 # serving a stale cached copy for up to 12 hours even across normal reloads.
 # ASSET_VERSION below is the cache-buster: bump it on every edit to either
 # file below, or changes won't reliably reach already-open browser tabs.
-ASSET_VERSION = "6"
+ASSET_VERSION = "8"
 app_include_js = [
+	f"/assets/support_ai/js/support_ai_message_renderer.js?v={ASSET_VERSION}",
 	f"/assets/support_ai/js/support_ai_widget.js?v={ASSET_VERSION}",
 	f"/assets/support_ai/js/support_ai_form_button.js?v={ASSET_VERSION}",
+	f"/assets/support_ai/js/support_ai_timeline.js?v={ASSET_VERSION}",
 ]
+
+after_install = "support_ai.install.after_install"
+after_migrate = "support_ai.install.after_migrate"
 app_include_css = f"/assets/support_ai/css/support_ai_widget.css?v={ASSET_VERSION}"
 
 # include js, css files in header of web template

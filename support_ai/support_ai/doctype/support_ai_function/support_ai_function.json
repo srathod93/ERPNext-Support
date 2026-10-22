@@ -1,0 +1,162 @@
+{
+ "actions": [],
+ "creation": "2026-10-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "function_name",
+  "type",
+  "requires_write_permissions",
+  "column_break_main",
+  "reference_doctype",
+  "report_name",
+  "function_path",
+  "pass_parameters_as_json",
+  "section_break_description",
+  "description",
+  "section_break_access",
+  "allowed_roles",
+  "section_break_params",
+  "params",
+  "strict",
+  "parameters"
+ ],
+ "fields": [
+  {
+   "fieldname": "function_name",
+   "fieldtype": "Data",
+   "label": "Function Name",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1,
+   "description": "The tool name the AI calls. Letters, numbers and underscores only, e.g. get_customer_balance."
+  },
+  {
+   "fieldname": "type",
+   "fieldtype": "Select",
+   "label": "Type",
+   "options": "Get Document\nGet Multiple Documents\nGet List\nGet Value\nCreate Document\nCreate Multiple Documents\nUpdate Document\nUpdate Multiple Documents\nDelete Document\nDelete Multiple Documents\nSubmit Document\nCancel Document\nGet Amended Document\nSet Value\nAttach File to Document\nGet Report Result\nCustom Function",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "requires_write_permissions",
+   "fieldtype": "Check",
+   "label": "Requires Write Permissions",
+   "read_only_depends_on": "eval:doc.type!=\"Custom Function\"",
+   "description": "Set automatically for create/update/delete/submit/cancel/set-value/attach. Write functions only run for users with the Support AI write role (see Support AI Settings)."
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "label": "Reference DocType",
+   "options": "DocType",
+   "depends_on": "eval:![\"Custom Function\", \"Get Report Result\"].includes(doc.type)",
+   "mandatory_depends_on": "eval:![\"Custom Function\", \"Get Report Result\", \"Attach File to Document\"].includes(doc.type)"
+  },
+  {
+   "fieldname": "report_name",
+   "fieldtype": "Link",
+   "label": "Report",
+   "options": "Report",
+   "depends_on": "eval:doc.type==\"Get Report Result\"",
+   "mandatory_depends_on": "eval:doc.type==\"Get Report Result\""
+  },
+  {
+   "fieldname": "function_path",
+   "fieldtype": "Data",
+   "label": "Function Path",
+   "depends_on": "eval:doc.type==\"Custom Function\"",
+   "mandatory_depends_on": "eval:doc.type==\"Custom Function\"",
+   "description": "Dotted path to a @frappe.whitelist()-ed Python function, e.g. my_app.api.get_stock_summary"
+  },
+  {
+   "fieldname": "pass_parameters_as_json",
+   "fieldtype": "Check",
+   "label": "Pass Parameters as JSON",
+   "depends_on": "eval:doc.type==\"Custom Function\"",
+   "description": "Call the function with one JSON string argument instead of keyword arguments."
+  },
+  {
+   "fieldname": "section_break_description",
+   "fieldtype": "Section Break",
+   "label": "Description"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description",
+   "reqd": 1,
+   "description": "Tell the AI exactly when to use this function and what it returns."
+  },
+  {
+   "fieldname": "section_break_access",
+   "fieldtype": "Section Break",
+   "label": "Access",
+   "description": "Optional extra restriction on top of normal DocType permissions."
+  },
+  {
+   "fieldname": "allowed_roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Allowed Roles",
+   "options": "Support AI Allowed Role",
+   "description": "If set, only users with at least one of these roles can run this function."
+  },
+  {
+   "fieldname": "section_break_params",
+   "fieldtype": "Section Break",
+   "label": "Parameters"
+  },
+  {
+   "fieldname": "params",
+   "fieldtype": "Table",
+   "label": "Parameters",
+   "options": "Support AI Function Param",
+   "description": "For Create/Update these are the document fields the AI fills. For Get List / Get Report Result they become filters. For Custom Function they are the keyword arguments."
+  },
+  {
+   "fieldname": "strict",
+   "fieldtype": "Check",
+   "label": "Strict Schema",
+   "description": "Do not allow parameters other than the ones listed."
+  },
+  {
+   "fieldname": "parameters",
+   "fieldtype": "JSON",
+   "label": "Generated JSON Schema",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Support AI",
+ "name": "Support AI Function",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "field:function_name",
+ "naming_rule": "By fieldname",
+ "title_field": "function_name",
+ "track_changes": 1
+}

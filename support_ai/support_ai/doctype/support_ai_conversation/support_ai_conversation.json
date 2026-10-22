@@ -9,9 +9,13 @@
   "title",
   "user",
   "status",
+  "bot",
   "column_break_meta",
   "reference_doctype",
   "reference_name",
+  "parent_conversation",
+  "source_doctype",
+  "source_name",
   "section_break_messages",
   "messages"
  ],
@@ -41,6 +45,14 @@
    "options": "Open\nResolved"
   },
   {
+   "fieldname": "bot",
+   "fieldtype": "Link",
+   "label": "Bot",
+   "options": "Support AI Bot",
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
    "fieldname": "column_break_meta",
    "fieldtype": "Column Break"
   },
@@ -59,6 +71,27 @@
    "options": "reference_doctype"
   },
   {
+   "fieldname": "parent_conversation",
+   "fieldtype": "Link",
+   "label": "Branched From",
+   "options": "Support AI Conversation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Link",
+   "label": "Started From DocType",
+   "options": "DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Started From",
+   "options": "source_doctype",
+   "read_only": 1
+  },
+  {
    "fieldname": "section_break_messages",
    "fieldtype": "Section Break",
    "label": "Conversation"
@@ -71,7 +104,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-13 00:00:00.000000",
+ "modified": "2026-10-21 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Support AI",
  "name": "Support AI Conversation",

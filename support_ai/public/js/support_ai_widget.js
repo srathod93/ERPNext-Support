@@ -15,12 +15,16 @@ const ICONS = {
 	restore: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="7" y="7" width="11" height="11" rx="1.2"/><path d="M7 4.5h9.5A2 2 0 0 1 18.5 6.5V16" stroke-linecap="round"/></svg>`,
 	close: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>`,
 	edit: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`,
+	branch: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 7v10"/><path d="M18 10c0 4-6 3-11.5 7"/></svg>`,
 	search: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65" stroke-linecap="round"/></svg>`,
 	back: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`,
+	attach: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg>`,
+	send: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/></svg>`,
+	prompts: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4z"/></svg>`,
 };
 
-const DEFAULT_WIDTH = 400;
-const DEFAULT_HEIGHT = 560;
+const DEFAULT_WIDTH = 420;
+const DEFAULT_HEIGHT = 600;
 const MINIMIZED_HEIGHT = 48;
 
 support_ai.Widget = class {
@@ -33,7 +37,17 @@ support_ai.Widget = class {
 		this.reference_doctype = null;
 		this.reference_name = null;
 		this.normal_rect = null; // {left, top, width, height} saved across maximize/minimize
+		this.bots = [];
+		this.bot = null;
+		this.pending_attachments = []; // [{file_url, file_name}]
+		// Index the next stored message will get on the server - the greeting
+		// shown in a new chat isn't stored, so DOM position can't be used.
+		this.stored_count = 0;
+		this.icons = ICONS;
+		this.renderer = new support_ai.MessageRenderer(this);
+		this.last_row = null; // {role, sent_at} of the last rendered message, for grouping
 		this.make();
+		this.load_bots();
 	}
 
 	make() {
@@ -44,13 +58,21 @@ support_ai.Widget = class {
 		this.$panel = $(`
 			<div class="support-ai-panel">
 				<div class="support-ai-panel-header">
-					<div class="support-ai-title">${__("Support AI")}</div>
-					<div class="support-ai-context"></div>
+					<div class="support-ai-header-identity">
+						<span class="support-ai-bot-avatar support-ai-bot-avatar-sm">${support_ai.render_icons.bot}</span>
+						<div class="support-ai-header-text">
+							<div class="support-ai-title">${__("Support AI")}</div>
+							<div class="support-ai-context"></div>
+						</div>
+					</div>
 					<button class="support-ai-icon-btn support-ai-history-btn" title="${__("Chat history")}">${ICONS.history}</button>
 					<button class="support-ai-icon-btn support-ai-new-btn" title="${__("New Conversation")}">${ICONS.plus}</button>
 					<button class="support-ai-icon-btn support-ai-minimize-btn" title="${__("Minimize")}">${ICONS.minimize}</button>
 					<button class="support-ai-icon-btn support-ai-maximize-btn" title="${__("Maximize")}">${ICONS.maximize}</button>
 					<button class="support-ai-icon-btn support-ai-close-btn" title="${__("Close")}">${ICONS.close}</button>
+				</div>
+				<div class="support-ai-bot-row" style="display:none">
+					<select class="form-control input-xs support-ai-bot-select"></select>
 				</div>
 				<div class="support-ai-history-panel">
 					<div class="support-ai-history-toolbar">
@@ -64,9 +86,18 @@ support_ai.Widget = class {
 				</div>
 				<div class="support-ai-body">
 					<div class="support-ai-messages"></div>
-					<div class="support-ai-input-row">
-						<textarea rows="2" placeholder="${__("Describe the issue, e.g. 'this invoice won't submit, what's wrong?'")}"></textarea>
-						<button class="btn btn-primary btn-sm support-ai-send-btn">${__("Ask")}</button>
+					<div class="support-ai-composer-wrap">
+						<div class="support-ai-composer">
+							<div class="support-ai-pending-attachments"></div>
+							<textarea rows="1" placeholder="${__("Describe the issue, e.g. 'this invoice won't submit, what's wrong?'")}"></textarea>
+							<div class="support-ai-composer-toolbar">
+								<button class="support-ai-icon-btn support-ai-attach-btn" title="${__("Attach file")}">${ICONS.plus}</button>
+								<span class="support-ai-toolbar-divider"></span>
+								<button class="support-ai-icon-btn support-ai-prompts-btn" title="${__("Saved prompts")}">${ICONS.prompts}</button>
+								<span class="support-ai-composer-hint">${__("Enter to send · Shift + Enter for a new line")}</span>
+								<button class="support-ai-send-btn" title="${__("Send")}" disabled>${ICONS.send}</button>
+							</div>
+						</div>
 					</div>
 				</div>
 			</div>
@@ -76,17 +107,28 @@ support_ai.Widget = class {
 		this.$body = this.$panel.find(".support-ai-body");
 		this.$messages = this.$panel.find(".support-ai-messages");
 		this.$context = this.$panel.find(".support-ai-context");
-		this.$input = this.$panel.find(".support-ai-input-row textarea");
+		this.$input = this.$panel.find(".support-ai-composer textarea");
+		this.$send = this.$panel.find(".support-ai-send-btn");
+		this.$title = this.$panel.find(".support-ai-title");
 		this.$historyPanel = this.$panel.find(".support-ai-history-panel");
 		this.$historyInput = this.$historyPanel.find("input");
 		this.$historyList = this.$panel.find(".support-ai-history-list");
 		this.$minimizeBtn = this.$panel.find(".support-ai-minimize-btn");
 		this.$maximizeBtn = this.$panel.find(".support-ai-maximize-btn");
+		this.$botRow = this.$panel.find(".support-ai-bot-row");
+		this.$botSelect = this.$panel.find(".support-ai-bot-select");
+		this.$pending = this.$panel.find(".support-ai-pending-attachments");
 
 		this.$bubble.on("click", () => this.toggle());
 		this.$panel.find(".support-ai-close-btn").on("click", () => this.toggle(false));
 		this.$panel.find(".support-ai-new-btn").on("click", () => this.start_new_conversation());
 		this.$panel.find(".support-ai-send-btn").on("click", () => this.send());
+		this.$panel.find(".support-ai-attach-btn").on("click", () => this.attach_file());
+		this.$panel.find(".support-ai-prompts-btn").on("click", () => this.show_prompts());
+		this.$botSelect.on("change", () => {
+			this.set_bot(this.$botSelect.val());
+			this.start_new_conversation();
+		});
 		this.$minimizeBtn.on("click", (e) => {
 			e.stopPropagation();
 			this.set_minimized(!this.is_minimized);
@@ -102,6 +144,7 @@ support_ai.Widget = class {
 			frappe.utils.debounce(() => this.run_search(), 300)
 		);
 
+		this.$input.on("input", () => this.refresh_composer());
 		this.$input.on("keydown", (e) => {
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
@@ -117,6 +160,47 @@ support_ai.Widget = class {
 		});
 
 		this.setup_drag();
+	}
+
+	// --- Bots ----------------------------------------------------------------------
+
+	load_bots() {
+		frappe.call({
+			method: "support_ai.api.get_available_bots",
+			callback: (r) => {
+				const res = r.message || {};
+				this.bots = res.bots || [];
+				this.bot = res.default || null;
+				this.$botSelect.empty();
+				this.$botSelect.append(`<option value="">${__("Support AI (default)")}</option>`);
+				this.bots.forEach((b) => {
+					$("<option>").val(b.name).text(b.name).attr("title", b.description || "").appendTo(this.$botSelect);
+				});
+				this.set_bot(this.bot);
+				this.$botRow.toggle(this.bots.length > 0);
+			},
+		});
+	}
+
+	set_bot(bot) {
+		this.bot = bot || null;
+		this.$botSelect.val(this.bot || "");
+		this.$title.text(this.bot || __("Support AI"));
+	}
+
+	// Auto-grows the composer (up to the CSS max-height) and enables Send
+	// only when there is something to send.
+	refresh_composer() {
+		const el = this.$input[0];
+		el.style.height = "auto";
+		el.style.height = el.scrollHeight + "px";
+		this.$send.prop("disabled", !(this.$input.val() || "").trim());
+	}
+
+	set_input(text) {
+		this.$input.val(text || "");
+		this.refresh_composer();
+		this.$input.trigger("focus");
 	}
 
 	// --- Window chrome: drag / minimize / maximize -------------------------
@@ -180,10 +264,12 @@ support_ai.Widget = class {
 			this.$panel.css("height", MINIMIZED_HEIGHT + "px");
 			this.$body.hide();
 			this.$historyPanel.hide();
+			this.$botRow.hide();
 			this.$minimizeBtn.html(ICONS.restore).attr("title", __("Restore"));
 		} else {
 			if (this.is_history_open) this.$historyPanel.show();
 			else this.$body.show();
+			this.$botRow.toggle(this.bots.length > 0);
 			this.$minimizeBtn.html(ICONS.minimize).attr("title", __("Minimize"));
 			if (this.normal_rect) this.$panel.css("height", this.normal_rect.height + "px");
 		}
@@ -208,28 +294,38 @@ support_ai.Widget = class {
 		}
 	}
 
-	toggle(force) {
-		this.is_open = force !== undefined ? force : !this.is_open;
-		this.$panel.toggleClass("support-ai-panel-open", this.is_open);
-		this.$bubble.toggle(!this.is_open);
-		if (this.is_open) {
-			if (!this.normal_rect) {
-				// First open: dock bottom-right at the default size, flush
-				// with the same margin the bubble itself uses (the bubble
-				// is hidden while open, so there's no need to leave extra
-				// room below the panel for it).
-				this.$panel.css({
-					right: "24px",
-					bottom: "24px",
-					left: "auto",
-					top: "auto",
-					width: DEFAULT_WIDTH + "px",
-					height: DEFAULT_HEIGHT + "px",
-				});
-			}
-			this.sync_with_current_document();
-			this.$input.trigger("focus");
+	open_panel() {
+		this.is_open = true;
+		this.$panel.addClass("support-ai-panel-open");
+		this.$bubble.hide();
+		if (!this.normal_rect) {
+			// First open: dock bottom-right at the default size, flush
+			// with the same margin the bubble itself uses (the bubble
+			// is hidden while open, so there's no need to leave extra
+			// room below the panel for it).
+			this.$panel.css({
+				right: "24px",
+				bottom: "24px",
+				left: "auto",
+				top: "auto",
+				width: DEFAULT_WIDTH + "px",
+				height: DEFAULT_HEIGHT + "px",
+			});
 		}
+		if (this.is_minimized) this.set_minimized(false);
+	}
+
+	toggle(force) {
+		const open = force !== undefined ? force : !this.is_open;
+		if (!open) {
+			this.is_open = false;
+			this.$panel.removeClass("support-ai-panel-open");
+			this.$bubble.show();
+			return;
+		}
+		this.open_panel();
+		this.sync_with_current_document();
+		this.$input.trigger("focus");
 	}
 
 	// --- History / search --------------------------------------------------
@@ -260,10 +356,14 @@ support_ai.Widget = class {
 				results.forEach((c) => {
 					const $item = $(`
 						<div class="support-ai-history-item">
-							<div class="support-ai-history-item-title">${frappe.utils.escape_html(c.title || c.name)}</div>
-							<div class="support-ai-history-item-meta">${frappe.datetime.comment_when(c.modified)}</div>
+							<div class="support-ai-history-item-title"></div>
+							<div class="support-ai-history-item-meta"></div>
 						</div>
 					`);
+					$item.find(".support-ai-history-item-title").text(c.title || c.name);
+					$item
+						.find(".support-ai-history-item-meta")
+						.text([c.bot, frappe.datetime.prettyDate(c.modified)].filter(Boolean).join(" · "));
 					$item.on("click", () => {
 						this.load_conversation(c.name);
 						this.toggle_history(false);
@@ -306,29 +406,64 @@ support_ai.Widget = class {
 		}
 	}
 
-	start_new_conversation() {
+	clear_messages() {
 		this.$messages.empty();
+		this.renderer.reset();
+		this.last_row = null;
+	}
+
+	show_intro() {
+		const has_ref = this.reference_doctype && this.reference_name;
+		const bot = this.bots.find((b) => b.name === this.bot);
+		const description = has_ref
+			? __("Ask why something isn't working, and I'll check its permissions, workflow, validation errors and custom code. Context loaded:")
+			: (bot && bot.description) ||
+			  __("Describe the issue you're facing, ask for data, or open a document first for a targeted diagnosis.");
+		this.$messages.append(
+			this.renderer.intro({
+				title: this.bot || __("Support AI"),
+				description,
+				context: has_ref ? `${this.reference_doctype} ${this.reference_name}` : null,
+			})
+		);
+	}
+
+	start_new_conversation() {
+		this.clear_messages();
+		this.clear_pending_attachments();
 		frappe.call({
 			method: "support_ai.api.new_conversation",
 			args: {
 				reference_doctype: this.reference_doctype,
 				reference_name: this.reference_name,
+				bot: this.bot,
 			},
 			callback: (r) => {
 				this.conversation = r.message;
-				const greeting =
-					this.reference_doctype && this.reference_name
-						? __("I have the context for {0} {1} loaded. What issue are you facing?", [
-								this.reference_doctype,
-								this.reference_name,
-						  ])
-						: __("Hi, I'm Support AI. Describe the issue you're facing, or open a document first for a targeted diagnosis.");
-				this.render_message("Assistant", greeting, { editable: false });
+				this.stored_count = 0;
+				this.show_intro();
 			},
 		});
 	}
 
-	load_conversation(name) {
+	// A thread started from a timeline comment / email (Ask Support AI in its
+	// "..." menu). The server stores the source text as the first message.
+	start_thread_from(source_doctype, source_name) {
+		this.open_panel();
+		if (this.is_history_open) this.toggle_history(false);
+		frappe.call({
+			method: "support_ai.api.new_conversation",
+			args: { source_doctype, source_name, bot: this.bot },
+			callback: (r) => {
+				this.load_conversation(r.message, () => {
+					this.$input.attr("placeholder", __("What would you like to know about this message?"));
+					this.$input.trigger("focus");
+				});
+			},
+		});
+	}
+
+	load_conversation(name, after) {
 		frappe.call({
 			method: "support_ai.api.get_conversation",
 			args: { name },
@@ -337,9 +472,134 @@ support_ai.Widget = class {
 				this.conversation = convo.name;
 				this.reference_doctype = convo.reference_doctype;
 				this.reference_name = convo.reference_name;
+				this.set_bot(convo.bot);
 				this.update_context_label();
-				this.$messages.empty();
-				(convo.messages || []).forEach((m) => this.render_message(m.role, m.content));
+				this.clear_pending_attachments();
+				this.clear_messages();
+				this.show_intro();
+				(convo.messages || []).forEach((m, idx) =>
+					this.render_message(m.role, m.content, {
+						index: idx,
+						sent_at: m.sent_at,
+						user: convo.user,
+						thinking: m.thinking,
+						debug_info: m.debug_info,
+						attachments: m.attachments ? JSON.parse(m.attachments) : [],
+					})
+				);
+				this.stored_count = (convo.messages || []).length;
+				if (after) after();
+			},
+		});
+	}
+
+	branch_from(index) {
+		frappe.call({
+			method: "support_ai.api.branch_conversation",
+			args: { conversation: this.conversation, message_index: index },
+			callback: (r) => {
+				this.load_conversation(r.message, () => {
+					frappe.show_alert({ message: __("Branched into a new conversation"), indicator: "green" });
+					this.$input.trigger("focus");
+				});
+			},
+		});
+	}
+
+	// --- Attachments ----------------------------------------------------------------
+
+	attach_file() {
+		if (!this.conversation) return;
+		new frappe.ui.FileUploader({
+			doctype: "Support AI Conversation",
+			docname: this.conversation,
+			allow_multiple: true,
+			make_attachments_public: false,
+			on_success: (file_doc) => {
+				this.pending_attachments.push({ file_url: file_doc.file_url, file_name: file_doc.file_name });
+				this.render_pending_attachments();
+			},
+		});
+	}
+
+	render_pending_attachments() {
+		this.$pending.empty();
+		this.pending_attachments.forEach((a, i) => {
+			const $chip = $(`<span class="support-ai-chip"><span></span><a class="support-ai-chip-x">&times;</a></span>`);
+			$chip.find("span").text(a.file_name);
+			$chip.find(".support-ai-chip-x").on("click", () => {
+				this.pending_attachments.splice(i, 1);
+				this.render_pending_attachments();
+			});
+			this.$pending.append($chip);
+		});
+		this.$pending.css("display", this.pending_attachments.length ? "flex" : "none");
+	}
+
+	clear_pending_attachments() {
+		this.pending_attachments = [];
+		this.render_pending_attachments();
+	}
+
+	// --- Saved prompts --------------------------------------------------------------
+
+	save_prompt_from(text) {
+		this.show_prompts(text);
+	}
+
+	show_prompts(prefill) {
+		frappe.call({
+			method: "support_ai.api.get_saved_prompts",
+			args: { bot: this.bot },
+			callback: (r) => {
+				const prompts = r.message || [];
+				const d = new frappe.ui.Dialog({
+					title: __("Saved Prompts"),
+					fields: [
+						{ fieldtype: "HTML", fieldname: "list" },
+						{ fieldtype: "Section Break", label: __("Save a new prompt") },
+						{ fieldtype: "Small Text", fieldname: "prompt", label: __("Prompt"), default: prefill || this.$input.val() },
+						{ fieldtype: "Check", fieldname: "for_this_bot", label: __("Only for this bot"), hidden: !this.bot },
+						{
+							fieldtype: "Check",
+							fieldname: "is_global",
+							label: __("Share with everyone"),
+							hidden: !frappe.user.has_role("System Manager"),
+						},
+					],
+					primary_action_label: __("Save Prompt"),
+					primary_action: (values) => {
+						if (!values.prompt) return;
+						frappe.call({
+							method: "support_ai.api.save_prompt",
+							args: {
+								prompt: values.prompt,
+								bot: values.for_this_bot ? this.bot : null,
+								is_global: values.is_global ? 1 : 0,
+							},
+							callback: () => {
+								d.hide();
+								frappe.show_alert({ message: __("Prompt saved"), indicator: "green" });
+							},
+						});
+					},
+				});
+				const $list = $(`<div class="support-ai-prompt-list"></div>`);
+				if (!prompts.length) {
+					$list.append(`<div class="text-muted small">${__("No saved prompts yet.")}</div>`);
+				}
+				prompts.forEach((p) => {
+					const $item = $(`<div class="support-ai-prompt-item"><div class="support-ai-prompt-text"></div><div class="text-muted small"></div></div>`);
+					$item.find(".support-ai-prompt-text").text(p.prompt);
+					$item.find(".small").text([p.is_global ? __("Shared") : __("Mine"), p.bot].filter(Boolean).join(" · "));
+					$item.on("click", () => {
+						this.set_input(p.prompt);
+						d.hide();
+					});
+					$list.append($item);
+				});
+				d.fields_dict.list.$wrapper.append($list);
+				d.show();
 			},
 		});
 	}
@@ -355,15 +615,16 @@ support_ai.Widget = class {
 			return;
 		}
 
-		this.render_message("User", message);
-		this.$input.val("");
+		const attachments = this.pending_attachments.slice();
+		this.render_message("User", message, { index: this.stored_count, attachments });
+		this.set_input("");
+		this.clear_pending_attachments();
 
 		const started_at = Date.now();
-		const $pending = this.render_message("Assistant", __("Thinking... (0s)"), { editable: false, pending: true });
-		const $pendingText = $pending.find(".support-ai-msg-bubble");
-		const timer = setInterval(() => {
-			$pendingText.text(__("Thinking... ({0}s)", [Math.round((Date.now() - started_at) / 1000)]));
-		}, 1000);
+		const label = () => __("is thinking... {0}s", [Math.round((Date.now() - started_at) / 1000)]);
+		const $pending = this.renderer.typing(label());
+		this.append_row($pending);
+		const timer = setInterval(() => $pending.find(".support-ai-typing-label").text(label()), 1000);
 
 		frappe.call({
 			method: "support_ai.api.ask",
@@ -372,22 +633,34 @@ support_ai.Widget = class {
 				message,
 				reference_doctype: this.reference_doctype,
 				reference_name: this.reference_name,
+				attachments: JSON.stringify(attachments.map((a) => a.file_url)),
 			},
 			callback: (r) => {
 				clearInterval(timer);
 				$pending.remove();
-				this.render_message("Assistant", r.message.reply, { editable: false });
+				const res = r.message;
+				this.stored_count += 2;
+				this.render_message("Assistant", res.reply, {
+					index: this.stored_count - 1,
+					thinking: res.thinking,
+					debug_info: res.debug_info,
+				});
 			},
 			error: () => {
 				clearInterval(timer);
 				$pending.remove();
-				this.render_message("Assistant", __("Something went wrong reaching Support AI. Please try again."), { editable: false });
+				// Nothing was stored server-side - reload so the view matches.
+				this.load_conversation(this.conversation, () =>
+					this.append_row(
+						this.renderer.system_note(__("Something went wrong reaching Support AI. Please try again."))
+					)
+				);
 			},
 		});
 	}
 
 	edit_message($row) {
-		const idx = this.$messages.children().index($row);
+		const idx = $row.data("index");
 		const original_text = $row.data("raw-content");
 
 		frappe.call({
@@ -395,31 +668,41 @@ support_ai.Widget = class {
 			args: { conversation: this.conversation, keep_count: idx },
 			callback: () => {
 				// Drop this message and everything after it from the view too.
-				this.$messages.children().slice(idx).remove();
-				this.$input.val(original_text).trigger("focus");
+				const pos = this.$messages.children().index($row);
+				this.$messages.children().slice(pos).remove();
+				this.stored_count = idx;
+				this.last_row = null;
+				this.set_input(original_text);
 			},
 		});
 	}
 
 	render_message(role, content, opts) {
 		opts = opts || {};
-		const is_user = role === "User";
-		const editable = opts.editable !== false && is_user;
-
-		const $row = $(`
-			<div class="support-ai-msg-row ${is_user ? "support-ai-msg-user" : "support-ai-msg-assistant"}">
-				${editable ? `<button class="support-ai-edit-btn" title="${__("Edit and resend")}">${ICONS.edit}</button>` : ""}
-				<div class="support-ai-msg-bubble"></div>
-			</div>
-		`);
-		$row.data("raw-content", content);
-		$row.find(".support-ai-msg-bubble").text(content);
-		if (editable) {
-			$row.find(".support-ai-edit-btn").on("click", (e) => {
-				e.stopPropagation();
-				this.edit_message($row);
-			});
+		const $separator = this.renderer.date_separator(opts.sent_at);
+		if ($separator) {
+			this.$messages.append($separator);
+			this.last_row = null;
 		}
+
+		if (role === "System") {
+			this.last_row = null;
+			return this.append_row(this.renderer.system_note(content));
+		}
+
+		// Like Raven: consecutive messages from the same sender within two
+		// minutes are grouped under one avatar/name header.
+		const sent_at = moment(opts.sent_at || frappe.datetime.now_datetime());
+		opts.continuation = !!(
+			this.last_row &&
+			this.last_row.role === role &&
+			Math.abs(sent_at.diff(this.last_row.sent_at, "minutes")) < 2
+		);
+		this.last_row = { role, sent_at };
+		return this.append_row(this.renderer.message(role, content, opts));
+	}
+
+	append_row($row) {
 		this.$messages.append($row);
 		this.$messages.scrollTop(this.$messages[0].scrollHeight);
 		return $row;
