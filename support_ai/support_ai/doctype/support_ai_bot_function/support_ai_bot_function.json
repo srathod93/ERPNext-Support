@@ -1,0 +1,49 @@
+{
+ "actions": [],
+ "creation": "2026-10-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "function",
+  "type",
+  "requires_write_permissions"
+ ],
+ "fields": [
+  {
+   "fieldname": "function",
+   "fieldtype": "Link",
+   "label": "Function",
+   "options": "Support AI Function",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "type",
+   "fieldtype": "Data",
+   "label": "Type",
+   "fetch_from": "function.type",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "requires_write_permissions",
+   "fieldtype": "Check",
+   "label": "Writes Data",
+   "fetch_from": "function.requires_write_permissions",
+   "read_only": 1,
+   "in_list_view": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Support AI",
+ "name": "Support AI Bot Function",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "istable": 1,
+ "editable_grid": 1
+}

@@ -11,17 +11,46 @@
   "temperature",
   "request_timeout",
   "max_output_tokens",
+  "max_tool_rounds",
+  "default_bot",
   "section_break_ollama",
   "ollama_base_url",
   "ollama_model",
+  "ollama_auth_type",
+  "ollama_api_key",
+  "ollama_username",
+  "ollama_password",
+  "section_break_openai",
+  "openai_api_key",
+  "openai_model",
+  "column_break_openai",
+  "openai_organisation_id",
+  "openai_project_id",
   "section_break_api",
   "api_base_url",
   "api_model",
   "column_break_api",
   "api_key",
+  "section_break_local_servers",
+  "lm_studio_base_url",
+  "lm_studio_model",
+  "column_break_local_servers",
+  "localai_base_url",
+  "localai_model",
+  "localai_api_key",
   "section_break_diag",
   "enable_live_validation_check",
   "core_apps",
+  "section_break_write",
+  "write_action_role",
+  "section_break_attachments",
+  "max_attachment_chars",
+  "enable_google_document_ai",
+  "google_project_id",
+  "google_processor_location",
+  "column_break_google",
+  "google_service_account_json_key",
+  "google_default_processor_id",
   "section_break_prompt",
   "system_prompt"
  ],
@@ -37,8 +66,9 @@
    "fieldname": "llm_provider",
    "fieldtype": "Select",
    "label": "LLM Provider",
-   "options": "Ollama\nOpenAI Compatible",
-   "reqd": 1
+   "options": "Ollama\nOpenAI\nOpenAI Compatible\nLM Studio\nLocalAI",
+   "reqd": 1,
+   "description": "Default provider. Each Support AI Bot can override it."
   },
   {
    "fieldname": "column_break_provider",
@@ -65,43 +95,108 @@
    "label": "Max Output Tokens"
   },
   {
+   "default": "2",
+   "fieldname": "max_tool_rounds",
+   "fieldtype": "Int",
+   "label": "Max Tool Rounds",
+   "description": "How many times the AI may call tools before it must answer. Keep low (2-3) for small local models."
+  },
+  {
+   "fieldname": "default_bot",
+   "fieldtype": "Link",
+   "label": "Default Bot",
+   "options": "Support AI Bot",
+   "description": "Bot used when the user doesn't pick one. Empty = plain diagnostic assistant with the settings below."
+  },
+  {
    "collapsible": 1,
-   "depends_on": "eval:doc.llm_provider==\"Ollama\"",
    "fieldname": "section_break_ollama",
    "fieldtype": "Section Break",
    "label": "Ollama (Local, Self-Hosted)"
   },
   {
    "default": "http://localhost:11434",
-   "depends_on": "eval:doc.llm_provider==\"Ollama\"",
    "fieldname": "ollama_base_url",
    "fieldtype": "Data",
    "label": "Ollama Base URL"
   },
   {
-   "default": "llama3.2:3b",
-   "depends_on": "eval:doc.llm_provider==\"Ollama\"",
-   "description": "A small model is recommended on CPU-only/low-RAM hosts. Pull it first: `ollama pull llama3.2:3b`.",
+   "default": "qwen2.5:1.5b",
+   "description": "A small model is recommended on CPU-only/low-RAM hosts. Pull it first: `ollama pull qwen2.5:1.5b`.",
    "fieldname": "ollama_model",
    "fieldtype": "Data",
    "label": "Ollama Model"
   },
   {
-   "collapsible": 1,
-   "depends_on": "eval:doc.llm_provider==\"OpenAI Compatible\"",
-   "fieldname": "section_break_api",
-   "fieldtype": "Section Break",
-   "label": "OpenAI-Compatible API (Free-Tier Hosted)"
+   "default": "None",
+   "description": "Use when Ollama is remote / behind a reverse proxy, or for Ollama Cloud (https://ollama.com with an API key).",
+   "fieldname": "ollama_auth_type",
+   "fieldtype": "Select",
+   "label": "Ollama Authentication",
+   "options": "None\nBearer Token\nBasic Auth"
   },
   {
-   "depends_on": "eval:doc.llm_provider==\"OpenAI Compatible\"",
+   "depends_on": "eval:doc.ollama_auth_type==\"Bearer Token\"",
+   "fieldname": "ollama_api_key",
+   "fieldtype": "Password",
+   "label": "Ollama API Key / Token"
+  },
+  {
+   "depends_on": "eval:doc.ollama_auth_type==\"Basic Auth\"",
+   "fieldname": "ollama_username",
+   "fieldtype": "Data",
+   "label": "Ollama Username"
+  },
+  {
+   "depends_on": "eval:doc.ollama_auth_type==\"Basic Auth\"",
+   "fieldname": "ollama_password",
+   "fieldtype": "Password",
+   "label": "Ollama Password"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_openai",
+   "fieldtype": "Section Break",
+   "label": "OpenAI"
+  },
+  {
+   "fieldname": "openai_api_key",
+   "fieldtype": "Password",
+   "label": "OpenAI API Key"
+  },
+  {
+   "default": "gpt-4o-mini",
+   "fieldname": "openai_model",
+   "fieldtype": "Data",
+   "label": "OpenAI Model"
+  },
+  {
+   "fieldname": "column_break_openai",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "openai_organisation_id",
+   "fieldtype": "Data",
+   "label": "Organisation ID"
+  },
+  {
+   "fieldname": "openai_project_id",
+   "fieldtype": "Data",
+   "label": "Project ID"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_api",
+   "fieldtype": "Section Break",
+   "label": "OpenAI-Compatible API (Groq, OpenRouter, ...)"
+  },
+  {
    "description": "e.g. https://api.groq.com/openai/v1 or any OpenAI-compatible free-tier endpoint",
    "fieldname": "api_base_url",
    "fieldtype": "Data",
    "label": "API Base URL"
   },
   {
-   "depends_on": "eval:doc.llm_provider==\"OpenAI Compatible\"",
    "fieldname": "api_model",
    "fieldtype": "Data",
    "label": "Model Name"
@@ -111,10 +206,46 @@
    "fieldtype": "Column Break"
   },
   {
-   "depends_on": "eval:doc.llm_provider==\"OpenAI Compatible\"",
    "fieldname": "api_key",
    "fieldtype": "Password",
    "label": "API Key"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_local_servers",
+   "fieldtype": "Section Break",
+   "label": "LM Studio / LocalAI"
+  },
+  {
+   "default": "http://localhost:1234/v1",
+   "fieldname": "lm_studio_base_url",
+   "fieldtype": "Data",
+   "label": "LM Studio Base URL"
+  },
+  {
+   "fieldname": "lm_studio_model",
+   "fieldtype": "Data",
+   "label": "LM Studio Model"
+  },
+  {
+   "fieldname": "column_break_local_servers",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "http://localhost:8080/v1",
+   "fieldname": "localai_base_url",
+   "fieldtype": "Data",
+   "label": "LocalAI Base URL"
+  },
+  {
+   "fieldname": "localai_model",
+   "fieldtype": "Data",
+   "label": "LocalAI Model"
+  },
+  {
+   "fieldname": "localai_api_key",
+   "fieldtype": "Password",
+   "label": "LocalAI API Key"
   },
   {
    "collapsible": 1,
@@ -137,6 +268,69 @@
   },
   {
    "collapsible": 1,
+   "fieldname": "section_break_write",
+   "fieldtype": "Section Break",
+   "label": "Write Actions",
+   "description": "AI functions that change data (create, update, delete, submit, cancel, set value, attach) only run for users who have this role, on a bot with 'Allow Write Actions' enabled, and only where the user's own DocType permissions allow it."
+  },
+  {
+   "default": "Support AI Action User",
+   "fieldname": "write_action_role",
+   "fieldtype": "Link",
+   "label": "Write Action Role",
+   "options": "Role"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_attachments",
+   "fieldtype": "Section Break",
+   "label": "Attachments & Google Document AI"
+  },
+  {
+   "default": "8000",
+   "fieldname": "max_attachment_chars",
+   "fieldtype": "Int",
+   "label": "Max Characters per Attachment",
+   "description": "Extracted text of each attached file is cut to this length before it is sent to the AI."
+  },
+  {
+   "fieldname": "enable_google_document_ai",
+   "fieldtype": "Check",
+   "label": "Enable Google Document AI"
+  },
+  {
+   "depends_on": "enable_google_document_ai",
+   "fieldname": "google_project_id",
+   "fieldtype": "Data",
+   "label": "Google Project ID"
+  },
+  {
+   "default": "us",
+   "depends_on": "enable_google_document_ai",
+   "fieldname": "google_processor_location",
+   "fieldtype": "Select",
+   "label": "Processor Location",
+   "options": "us\neu"
+  },
+  {
+   "fieldname": "column_break_google",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "enable_google_document_ai",
+   "fieldname": "google_service_account_json_key",
+   "fieldtype": "Password",
+   "label": "Service Account JSON Key",
+   "length": 4000
+  },
+  {
+   "depends_on": "enable_google_document_ai",
+   "fieldname": "google_default_processor_id",
+   "fieldtype": "Data",
+   "label": "Default Processor ID"
+  },
+  {
+   "collapsible": 1,
    "fieldname": "section_break_prompt",
    "fieldtype": "Section Break",
    "label": "System Prompt"
@@ -150,7 +344,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-13 00:00:00.000000",
+ "modified": "2026-10-21 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Support AI",
  "name": "Support AI Settings",

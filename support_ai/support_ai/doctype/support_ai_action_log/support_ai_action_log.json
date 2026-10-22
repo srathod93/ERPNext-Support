@@ -1,0 +1,137 @@
+{
+ "actions": [],
+ "creation": "2026-10-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "user",
+  "status",
+  "function",
+  "function_type",
+  "column_break_log",
+  "bot",
+  "conversation",
+  "reference_doctype",
+  "reference_name",
+  "section_break_payload",
+  "arguments",
+  "result",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Success\nFailed\nDenied",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "function",
+   "fieldtype": "Link",
+   "label": "Function",
+   "options": "Support AI Function",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "function_type",
+   "fieldtype": "Data",
+   "label": "Function Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_log",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "bot",
+   "fieldtype": "Link",
+   "label": "Bot",
+   "options": "Support AI Bot",
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "conversation",
+   "fieldtype": "Link",
+   "label": "Conversation",
+   "options": "Support AI Conversation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "label": "Reference DocType",
+   "options": "DocType",
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Reference Name",
+   "options": "reference_doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_payload",
+   "fieldtype": "Section Break",
+   "label": "Details"
+  },
+  {
+   "fieldname": "arguments",
+   "fieldtype": "Code",
+   "label": "Arguments",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "result",
+   "fieldtype": "Code",
+   "label": "Result",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Support AI",
+ "name": "Support AI Action Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "format:SAI-ACT-{#####}",
+ "naming_rule": "Expression",
+ "in_create": 1,
+ "track_changes": 1
+}
