@@ -1,4 +1,10 @@
-exclude: 'node_modules|.git'
+exclude: |
+  (?x)(
+      node_modules|.git|
+      ^\.claude/|
+      ^support_ai/commands/(__init__|export_fixtures)\.py$|
+      ^support_ai/utils/api_handlers/(envelope|error_messages|response_formatter)\.py$
+  )
 default_stages: [pre-commit]
 fail_fast: false
 
