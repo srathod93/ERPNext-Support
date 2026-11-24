@@ -42,7 +42,7 @@ commands = ["support_ai.commands.export_fixtures.export_fixtures"]
 # serving a stale cached copy for up to 12 hours even across normal reloads.
 # ASSET_VERSION below is the cache-buster: bump it on every edit to either
 # file below, or changes won't reliably reach already-open browser tabs.
-ASSET_VERSION = "8"
+ASSET_VERSION = "9"
 app_include_js = [
 	f"/assets/support_ai/js/support_ai_message_renderer.js?v={ASSET_VERSION}",
 	f"/assets/support_ai/js/support_ai_widget.js?v={ASSET_VERSION}",

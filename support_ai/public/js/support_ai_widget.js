@@ -89,7 +89,7 @@ support_ai.Widget = class {
 					<div class="support-ai-composer-wrap">
 						<div class="support-ai-composer">
 							<div class="support-ai-pending-attachments"></div>
-							<textarea rows="1" placeholder="${__("Describe the issue, e.g. 'this invoice won't submit, what's wrong?'")}"></textarea>
+							<textarea rows="1" placeholder="${__("How can I support you?")}"></textarea>
 							<div class="support-ai-composer-toolbar">
 								<button class="support-ai-icon-btn support-ai-attach-btn" title="${__("Attach file")}">${ICONS.plus}</button>
 								<span class="support-ai-toolbar-divider"></span>
@@ -418,7 +418,7 @@ support_ai.Widget = class {
 		const description = has_ref
 			? __("Ask why something isn't working, and I'll check its permissions, workflow, validation errors and custom code. Context loaded:")
 			: (bot && bot.description) ||
-			  __("Describe the issue you're facing, ask for data, or open a document first for a targeted diagnosis.");
+			  __("How can I support you? Ask for any data, or open a document first for a targeted diagnosis.");
 		this.$messages.append(
 			this.renderer.intro({
 				title: this.bot || __("Support AI"),
