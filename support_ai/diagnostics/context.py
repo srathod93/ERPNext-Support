@@ -11,6 +11,7 @@ import signal
 import frappe
 
 from support_ai.diagnostics.indexer import get_doctype_custom_code_context
+from support_ai.diagnostics.masking import mask_record
 
 VALIDATION_CHECK_TIMEOUT_SECONDS = 10
 
@@ -110,7 +111,7 @@ def get_field_values(doc, meta, max_fields=80):
 	if child_tables:
 		values["_child_tables"] = child_tables
 
-	return values
+	return mask_record(values)
 
 
 def get_missing_mandatory_fields(doc, meta):

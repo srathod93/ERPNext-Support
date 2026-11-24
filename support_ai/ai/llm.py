@@ -8,8 +8,8 @@ OpenRouter). Every setting can be overridden per Support AI Bot."""
 
 from dataclasses import dataclass, field
 
-import requests
 import frappe
+import requests
 
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 
@@ -127,11 +127,12 @@ def chat(messages, temperature=None, config=None):
 	return content
 
 
-def chat_message(messages, tools=None, temperature=None, config=None):
+def chat_message(messages, tools=None, temperature=None, config=None, on_token=None):
 	"""Returns the raw assistant message as {"content": str|None, "tool_calls":
 	[{"name": str, "arguments": dict}, ...], "thinking": str|None}. tool_calls
 	is always a list (empty if the model didn't call a tool, which is the
-	common case).
+	common case). With on_token, the reply is streamed and each text chunk is
+	passed to on_token as it arrives.
 
 	A message may carry "images": [{"mime": "image/png", "data": <base64>}];
 	it's converted to each provider's own image format here."""
@@ -144,14 +145,15 @@ def chat_message(messages, tools=None, temperature=None, config=None):
 		config.temperature = temperature
 
 	if config.provider == "Ollama":
-		return _chat_ollama(config, messages, tools)
+		return _chat_ollama(config, messages, tools, on_token)
 	if config.provider in OPENAI_STYLE_PROVIDERS:
-		return _chat_openai_style(config, messages, tools)
+		return _chat_openai_style(config, messages, tools, on_token)
 
 	raise LLMError(f"Unsupported LLM provider: {config.provider}")
 
 
-def _chat_ollama(config, messages, tools):
+def _chat_ollama(config, messages, tools, on_token=None):
+	"""Calls Ollama /api/chat; streams when on_token is given."""
 	payload = {
 		"model": config.model,
 		"messages": [_ollama_message(m) for m in messages],
@@ -167,6 +169,10 @@ def _chat_ollama(config, messages, tools):
 		payload["options"]["top_p"] = config.top_p
 	if tools:
 		payload["tools"] = tools
+	if on_token:
+		from support_ai.ai.streaming import stream_ollama
+
+		return stream_ollama(config, payload, on_token)
 
 	try:
 		response = requests.post(
@@ -233,7 +239,8 @@ def _ollama_auth(settings):
 	return {}, None
 
 
-def _chat_openai_style(config, messages, tools):
+def _chat_openai_style(config, messages, tools, on_token=None):
+	"""Calls an OpenAI-compatible /chat/completions; streams when on_token is given."""
 	headers = {"Content-Type": "application/json", **config.headers}
 
 	payload = {"model": config.model, "messages": [_openai_message(m) for m in messages]}
@@ -251,6 +258,10 @@ def _chat_openai_style(config, messages, tools):
 			payload["top_p"] = config.top_p
 	if tools:
 		payload["tools"] = tools
+	if on_token:
+		from support_ai.ai.streaming import stream_openai_style
+
+		return stream_openai_style(config, headers, payload, on_token)
 
 	try:
 		response = requests.post(

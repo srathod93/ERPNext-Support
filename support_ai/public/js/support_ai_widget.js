@@ -20,6 +20,7 @@ const ICONS = {
 	back: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`,
 	attach: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg>`,
 	send: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/></svg>`,
+	mic: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/></svg>`,
 	prompts: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4z"/></svg>`,
 };
 
@@ -45,9 +46,14 @@ support_ai.Widget = class {
 		this.stored_count = 0;
 		this.icons = ICONS;
 		this.renderer = new support_ai.MessageRenderer(this);
+		this.actions = new support_ai.ActionRenderer(this);
 		this.last_row = null; // {role, sent_at} of the last rendered message, for grouping
+		this.suggestions = [];
+		this.$pending_row = null; // typing row that streamed text goes into
 		this.make();
 		this.load_bots();
+		this.load_suggestions();
+		this.listen_for_stream();
 	}
 
 	make() {
@@ -94,6 +100,7 @@ support_ai.Widget = class {
 								<button class="support-ai-icon-btn support-ai-attach-btn" title="${__("Attach file")}">${ICONS.plus}</button>
 								<span class="support-ai-toolbar-divider"></span>
 								<button class="support-ai-icon-btn support-ai-prompts-btn" title="${__("Saved prompts")}">${ICONS.prompts}</button>
+								<button class="support-ai-icon-btn support-ai-mic-btn" title="${__("Speak your question")}" style="display:none">${ICONS.mic}</button>
 								<span class="support-ai-composer-hint">${__("Enter to send · Shift + Enter for a new line")}</span>
 								<button class="support-ai-send-btn" title="${__("Send")}" disabled>${ICONS.send}</button>
 							</div>
@@ -125,6 +132,12 @@ support_ai.Widget = class {
 		this.$panel.find(".support-ai-send-btn").on("click", () => this.send());
 		this.$panel.find(".support-ai-attach-btn").on("click", () => this.attach_file());
 		this.$panel.find(".support-ai-prompts-btn").on("click", () => this.show_prompts());
+		this.setup_voice();
+		// In-app links in answers open with the Desk router, keeping the chat open.
+		this.$messages.on("click", "a.support-ai-route-link", (e) => {
+			e.preventDefault();
+			frappe.set_route(decodeURIComponent($(e.currentTarget).attr("href")));
+		});
 		this.$botSelect.on("change", () => {
 			this.set_bot(this.$botSelect.val());
 			this.start_new_conversation();
@@ -160,6 +173,10 @@ support_ai.Widget = class {
 		});
 
 		this.setup_drag();
+		// Keep the "Purchase Invoice list" / "General question" label in step with the page.
+		frappe.router.on("change", () => {
+			if (!this.reference_name) this.update_context_label();
+		});
 	}
 
 	// --- Bots ----------------------------------------------------------------------
@@ -186,6 +203,62 @@ support_ai.Widget = class {
 		this.bot = bot || null;
 		this.$botSelect.val(this.bot || "");
 		this.$title.text(this.bot || __("Support AI"));
+	}
+
+	/** Loads role-based starter questions shown on a new chat. */
+	load_suggestions() {
+		frappe.call({
+			method: "support_ai.support_ai.api.v1.assistant.get_suggestions",
+			type: "GET",
+			callback: (r) => (this.suggestions = r.message || []),
+		});
+	}
+
+	/**
+	 * Shows the model's reply word by word while it is generated. Events:
+	 * "token" (append text), "reset" (a new model round started), "status".
+	 */
+	listen_for_stream() {
+		frappe.realtime.on("support_ai_stream", (data) => {
+			if (!data || data.conversation !== this.conversation || !this.$pending_row) return;
+			const $text = this.$pending_row.find(".support-ai-stream-text");
+			if (data.event === "reset") {
+				$text.data("raw", "").empty();
+			} else if (data.event === "token") {
+				const raw = ($text.data("raw") || "") + data.text;
+				$text.data("raw", raw).html(this.renderer.markdown(raw));
+				this.$messages.scrollTop(this.$messages[0].scrollHeight);
+			} else if (data.event === "status") {
+				this.$pending_row.find(".support-ai-typing-label").text(data.text);
+			}
+		});
+	}
+
+	/** Adds a mic button that types what the user says (browser speech recognition). */
+	setup_voice() {
+		const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+		if (!Recognition) return;
+		const $mic = this.$panel.find(".support-ai-mic-btn").show();
+		let recognition = null;
+		$mic.on("click", () => {
+			if (recognition) {
+				recognition.stop();
+				return;
+			}
+			recognition = new Recognition();
+			recognition.lang = frappe.boot.lang === "en" ? "en-IN" : frappe.boot.lang;
+			recognition.interimResults = false;
+			recognition.onresult = (e) => {
+				const text = Array.from(e.results).map((r) => r[0].transcript).join(" ");
+				this.set_input([(this.$input.val() || "").trim(), text].filter(Boolean).join(" "));
+			};
+			recognition.onend = () => {
+				recognition = null;
+				$mic.removeClass("active");
+			};
+			$mic.addClass("active");
+			recognition.start();
+		});
 	}
 
 	// Auto-grows the composer (up to the CSS max-height) and enables Send
@@ -399,11 +472,27 @@ support_ai.Widget = class {
 	}
 
 	update_context_label() {
+		const list = this.get_list_context();
 		if (this.reference_doctype && this.reference_name) {
 			this.$context.text(`${this.reference_doctype}: ${this.reference_name}`);
+		} else if (list) {
+			this.$context.text(__("{0} list", [__(list.doctype)]));
 		} else {
 			this.$context.text(__("General question"));
 		}
+	}
+
+	/**
+	 * The list view the user is on, so "show these" / "count" questions use
+	 * its DocType and filters.
+	 *
+	 * @returns {{doctype: string, filters: Array}|null}
+	 */
+	get_list_context() {
+		const route = frappe.get_route() || [];
+		if (route[0] !== "List" || !window.cur_list || cur_list.doctype !== route[1]) return null;
+		const filters = cur_list.get_filters_for_args ? cur_list.get_filters_for_args() : [];
+		return { doctype: cur_list.doctype, filters: filters || [] };
 	}
 
 	clear_messages() {
@@ -424,11 +513,12 @@ support_ai.Widget = class {
 				title: this.bot || __("Support AI"),
 				description,
 				context: has_ref ? `${this.reference_doctype} ${this.reference_name}` : null,
+				suggestions: has_ref ? [] : this.suggestions,
 			})
 		);
 	}
 
-	start_new_conversation() {
+	start_new_conversation(after) {
 		this.clear_messages();
 		this.clear_pending_attachments();
 		frappe.call({
@@ -442,6 +532,7 @@ support_ai.Widget = class {
 				this.conversation = r.message;
 				this.stored_count = 0;
 				this.show_intro();
+				if (after) after();
 			},
 		});
 	}
@@ -485,6 +576,9 @@ support_ai.Widget = class {
 						thinking: m.thinking,
 						debug_info: m.debug_info,
 						attachments: m.attachments ? JSON.parse(m.attachments) : [],
+						actions: m.response_data ? JSON.parse(m.response_data).actions : [],
+						feedback: m.feedback,
+						answered_by: m.answered_by,
 					})
 				);
 				this.stored_count = (convo.messages || []).length;
@@ -623,8 +717,13 @@ support_ai.Widget = class {
 		const started_at = Date.now();
 		const label = () => __("is thinking... {0}s", [Math.round((Date.now() - started_at) / 1000)]);
 		const $pending = this.renderer.typing(label());
+		this.$pending_row = $pending;
 		this.append_row($pending);
-		const timer = setInterval(() => $pending.find(".support-ai-typing-label").text(label()), 1000);
+		const timer = setInterval(() => {
+			const $label = $pending.find(".support-ai-typing-label");
+			if (/thinking/.test($label.text()) || !$label.text()) $label.text(label());
+		}, 1000);
+		const list_context = this.reference_name ? null : this.get_list_context();
 
 		frappe.call({
 			method: "support_ai.api.ask",
@@ -634,21 +733,26 @@ support_ai.Widget = class {
 				reference_doctype: this.reference_doctype,
 				reference_name: this.reference_name,
 				attachments: JSON.stringify(attachments.map((a) => a.file_url)),
+				list_context: list_context ? JSON.stringify(list_context) : null,
 			},
 			callback: (r) => {
 				clearInterval(timer);
 				$pending.remove();
+				this.$pending_row = null;
 				const res = r.message;
-				this.stored_count += 2;
+				this.stored_count = res.message_index + 1;
 				this.render_message("Assistant", res.reply, {
-					index: this.stored_count - 1,
+					index: res.message_index,
 					thinking: res.thinking,
 					debug_info: res.debug_info,
+					actions: res.actions,
+					answered_by: res.answered_by,
 				});
 			},
 			error: () => {
 				clearInterval(timer);
 				$pending.remove();
+				this.$pending_row = null;
 				// Nothing was stored server-side - reload so the view matches.
 				this.load_conversation(this.conversation, () =>
 					this.append_row(
@@ -657,6 +761,35 @@ support_ai.Widget = class {
 				);
 			},
 		});
+	}
+
+	/**
+	 * Sends a prompt as if typed (suggestion chips, clarifying options).
+	 *
+	 * @param {string} text - The prompt to send.
+	 */
+	send_text(text) {
+		this.set_input(text);
+		this.send();
+	}
+
+	/**
+	 * Opens a chat about the current form and asks why an error happened
+	 * (the "Ask Support AI why" button on error dialogs).
+	 *
+	 * @param {string} doctype - Form DocType.
+	 * @param {string} name - Document name.
+	 * @param {string} error_text - The error message shown to the user.
+	 */
+	ask_about_error(doctype, name, error_text) {
+		this.open_panel();
+		if (this.is_history_open) this.toggle_history(false);
+		this.reference_doctype = doctype;
+		this.reference_name = name;
+		this.update_context_label();
+		this.start_new_conversation(() =>
+			this.send_text(__("Why am I getting this error and how do I fix it? Error: {0}", [error_text]))
+		);
 	}
 
 	edit_message($row) {

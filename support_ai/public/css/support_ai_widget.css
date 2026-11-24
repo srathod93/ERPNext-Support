@@ -707,6 +707,112 @@
 	white-space: pre-wrap;
 }
 
+/* --- Tables, chips, action buttons, confirm cards, feedback --- */
+.support-ai-table-wrap {
+	max-width: 100%;
+	overflow-x: auto;
+	margin: 4px 0 8px;
+	border: 1px solid var(--border-color, #d1d8dd);
+	border-radius: 6px;
+}
+.support-ai-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 12px;
+}
+.support-ai-table th,
+.support-ai-table td {
+	padding: 5px 8px;
+	text-align: left;
+	white-space: nowrap;
+	border-bottom: 1px solid var(--border-color, #d1d8dd);
+}
+.support-ai-table th {
+	background: var(--subtle-fg, #f4f5f6);
+	font-weight: 600;
+	color: var(--text-muted, #8d99a6);
+}
+.support-ai-table tr:last-child td {
+	border-bottom: none;
+}
+.support-ai-text em {
+	color: var(--text-muted, #8d99a6);
+	font-size: 11px;
+}
+.support-ai-suggestions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+}
+.support-ai-suggestion {
+	padding: 4px 10px;
+	font-size: 12px;
+	border-radius: 999px;
+	border: 1px solid var(--border-color, #d1d8dd);
+	background: var(--fg-color, #fff);
+	color: var(--text-color, #1f272e);
+	cursor: pointer;
+}
+.support-ai-suggestion:hover {
+	border-color: var(--primary, #2490ef);
+	color: var(--primary, #2490ef);
+}
+.support-ai-action-buttons {
+	display: flex;
+	gap: 6px;
+	margin-top: 6px;
+}
+.support-ai-confirm-card {
+	margin-top: 8px;
+	padding: 8px 10px;
+	border: 1px solid var(--orange-500, #f8a14e);
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--orange-500, #f8a14e) 8%, transparent);
+	font-size: 12px;
+}
+.support-ai-confirm-title {
+	font-weight: 600;
+	margin-bottom: 4px;
+}
+.support-ai-confirm-summary {
+	word-break: break-word;
+	margin-bottom: 6px;
+}
+.support-ai-confirm-buttons {
+	display: flex;
+	gap: 6px;
+}
+.support-ai-feedback {
+	display: flex;
+	gap: 2px;
+	margin-top: 4px;
+	opacity: 0.55;
+}
+.support-ai-row:hover .support-ai-feedback,
+.support-ai-feedback:has(.active) {
+	opacity: 1;
+}
+.support-ai-feedback-btn {
+	border: none;
+	background: transparent;
+	padding: 2px 5px;
+	border-radius: 4px;
+	font-size: 12px;
+	cursor: pointer;
+	filter: grayscale(1);
+}
+.support-ai-feedback-btn.active {
+	filter: none;
+	background: var(--subtle-fg, #f4f5f6);
+}
+.support-ai-mic-btn.active {
+	color: var(--red-500, #e24c4c);
+}
+.support-ai-stream-text:empty {
+	display: none;
+}
+
 @media (max-width: 480px) {
 	.support-ai-bubble {
 		right: 14px;

@@ -11,6 +11,8 @@ doctype's real fieldnames (no raw SQL), and results are hard-capped."""
 
 import frappe
 
+from support_ai.diagnostics.masking import mask_record
+
 MAX_LIMIT = 20
 DEFAULT_LIMIT = 5
 
@@ -217,7 +219,7 @@ def lookup_records(doctype=None, filters=None, order_by=None, limit=None):
 
 	rows = _drop_uninformative_columns(rows, always_keep={"name", "creation", "modified"}, display_cap=MAX_FIELDS)
 
-	result = {"doctype": doctype, "filters_applied": clean_filters, "count": len(rows), "records": rows}
+	result = {"doctype": doctype, "filters_applied": clean_filters, "count": len(rows), "records": mask_record(rows)}
 	warnings = []
 	if used_partial_match:
 		warnings.append(

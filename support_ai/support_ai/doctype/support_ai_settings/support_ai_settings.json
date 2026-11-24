@@ -12,6 +12,9 @@
   "request_timeout",
   "max_output_tokens",
   "max_tool_rounds",
+  "reasoning_model",
+  "enable_streaming",
+  "rate_limit_per_minute",
   "default_bot",
   "section_break_ollama",
   "ollama_base_url",
@@ -43,6 +46,15 @@
   "core_apps",
   "section_break_write",
   "write_action_role",
+  "section_break_privacy",
+  "sensitive_fieldnames",
+  "sensitive_unmask_role",
+  "section_break_vocabulary",
+  "synonyms",
+  "suggested_prompts",
+  "section_break_digest",
+  "enable_daily_digest",
+  "digest_role",
   "section_break_attachments",
   "max_attachment_chars",
   "enable_google_document_ai",
@@ -339,12 +351,87 @@
    "fieldname": "system_prompt",
    "fieldtype": "Long Text",
    "label": "System Prompt"
+  },
+  {
+   "fieldname": "reasoning_model",
+   "fieldtype": "Data",
+   "label": "Reasoning Model",
+   "description": "Optional bigger model for 'why / how to fix' questions, e.g. qwen2.5:7b. Same provider as above. Simple data questions keep using the main model."
+  },
+  {
+   "fieldname": "enable_streaming",
+   "fieldtype": "Check",
+   "label": "Stream Replies",
+   "default": "1",
+   "description": "Show the model's reply word by word while it is generated."
+  },
+  {
+   "fieldname": "rate_limit_per_minute",
+   "fieldtype": "Int",
+   "label": "Max Questions per User per Minute",
+   "default": "20",
+   "description": "0 means no limit."
+  },
+  {
+   "fieldname": "section_break_privacy",
+   "fieldtype": "Section Break",
+   "label": "Privacy"
+  },
+  {
+   "fieldname": "sensitive_fieldnames",
+   "fieldtype": "Small Text",
+   "label": "Sensitive Fields",
+   "default": "pan\ntax_id\naadhaar\nbank_account_no\naccount_number\niban\nbank_ac_no\nifsc_code\nsalary\nctc\npassport_number\ndate_of_birth",
+   "description": "One fieldname (or part of a fieldname) per line. Their values are masked in Support AI answers."
+  },
+  {
+   "fieldname": "sensitive_unmask_role",
+   "fieldtype": "Link",
+   "label": "Role That Can See Sensitive Fields",
+   "options": "Role"
+  },
+  {
+   "fieldname": "section_break_vocabulary",
+   "fieldtype": "Section Break",
+   "label": "Vocabulary and Suggestions"
+  },
+  {
+   "fieldname": "synonyms",
+   "fieldtype": "Table",
+   "label": "Synonyms",
+   "options": "Support AI Synonym",
+   "description": "Your own words for document types, e.g. GRN = Purchase Receipt, PO = Purchase Order."
+  },
+  {
+   "fieldname": "suggested_prompts",
+   "fieldtype": "Table",
+   "label": "Suggested Questions",
+   "options": "Support AI Suggested Prompt",
+   "description": "Shown as one-click questions on a new chat. Leave Role empty to show to everyone."
+  },
+  {
+   "fieldname": "section_break_digest",
+   "fieldtype": "Section Break",
+   "label": "Daily Digest"
+  },
+  {
+   "fieldname": "enable_daily_digest",
+   "fieldtype": "Check",
+   "label": "Send Daily Digest",
+   "description": "Every morning, send each user with the role below a summary of what needs their attention."
+  },
+  {
+   "fieldname": "digest_role",
+   "fieldtype": "Link",
+   "label": "Digest Role",
+   "options": "Role",
+   "depends_on": "enable_daily_digest"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-21 00:00:00.000000",
+ "modified": "2026-11-24 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Support AI",
  "name": "Support AI Settings",

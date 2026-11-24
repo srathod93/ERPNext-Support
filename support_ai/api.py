@@ -1,16 +1,12 @@
 # Copyright (c) 2026, shyam8848 and contributors
 # For license information, please see license.txt
 
-import json
-
 import frappe
 from frappe import _
 from frappe.utils import strip_html_tags
 
-from support_ai.ai.formatter import extract_thinking
-from support_ai.ai.llm import LLMError, get_llm_config, get_settings
+from support_ai.ai.llm import get_settings
 from support_ai.diagnostics.context import build_document_context
-from support_ai.diagnostics.router import database_facts, plan_lookup, run_planned_lookup
 
 THREAD_SOURCE_DOCTYPES = ("Comment", "Communication")
 
@@ -166,125 +162,42 @@ def branch_conversation(conversation, message_index):
 
 
 @frappe.whitelist()
-def ask(conversation, message, reference_doctype=None, reference_name=None, attachments=None):
+def ask(conversation, message, reference_doctype=None, reference_name=None, attachments=None, list_context=None):
+	"""
+	Answers one chat message - from the database when it is a plain data
+	question, otherwise with the LLM. See support_ai.ai.turn.ChatTurn.
+
+	Endpoint: /api/method/support_ai.api.ask
+	Method: POST
+
+	Parameters:
+		conversation (str, required): Support AI Conversation name.
+		message (str, required): The user's message.
+		reference_doctype (str, optional): Document the chat is about.
+		reference_name (str, optional): Its name.
+		attachments (str | list, optional): JSON list of file_urls.
+		list_context (str | dict, optional): JSON {"doctype", "filters"} of the open list view.
+
+	Returns:
+		dict: {"conversation", "reply", "thinking", "debug_info", "actions", "answered_by", "message_index"}
+	"""
+	from support_ai.ai.turn import ChatTurn
+
 	if not message or not message.strip():
 		frappe.throw(_("Message cannot be empty."))
 
 	convo = frappe.get_doc("Support AI Conversation", conversation)
 	convo.check_permission("write")
-
-	reference_doctype = reference_doctype or convo.reference_doctype
-	reference_name = reference_name or convo.reference_name
-	has_reference = bool(reference_doctype and reference_name)
-
 	bot = get_bot(convo.bot) if convo.bot else None
+
 	attachments = frappe.parse_json(attachments) if isinstance(attachments, str) and attachments else attachments
 	attachments = [a for a in (attachments or []) if isinstance(a, str)]
+	list_context = frappe.parse_json(list_context) if isinstance(list_context, str) and list_context else list_context
+	if not isinstance(list_context, dict) or not list_context.get("doctype"):
+		list_context = None
 
-	debug = {"bot": bot.name if bot else None}
-	try:
-		config = get_llm_config(bot)
-		debug.update({"provider": config.provider, "model": config.model, "engine": bot.engine if bot else "Built-in"})
-	except LLMError as e:
-		config = None
-		config_error = str(e)
-
-	attachment_context, images = "", []
-	if attachments:
-		from support_ai.ai.files import prepare_attachments
-
-		attachment_context, images = prepare_attachments(attachments, bot, config)
-
-	convo.append_message(
-		"User",
-		message,
-		attachments=json.dumps(attachments) if attachments else None,
-		attachment_context=attachment_context or None,
-	)
-
-	if config is None:
-		return _reply(convo, f"⚠️ Support AI could not get a response: {config_error}", bot=bot, debug=debug)
-
-	# Plain data questions ("give the purchase invoice id") are answered
-	# straight from the database - small local models don't reliably call
-	# the lookup tool, and this needs no model call at all.
-	if _can_use_router(bot, has_reference, attachments):
-		earlier = [m.content for m in convo.messages[:-1] if m.role == "User"][-5:]
-		plan = plan_lookup(message, history=earlier)
-		if plan:
-			debug["router"] = True
-			return _reply(convo, run_planned_lookup(plan), bot=bot, debug=debug)
-
-	from support_ai.ai.instructions import build_system_prompt
-	from support_ai.ai.tools import ToolContext, get_tools
-
-	tools = get_tools(bot, has_reference, config)
-	debug["tools_offered"] = [t.name for t in tools]
-	ctx = ToolContext(bot=bot, conversation=convo.name)
-
-	llm_messages = [
-		{
-			"role": "system",
-			"content": build_system_prompt(
-				bot,
-				has_write_tools=any(t.is_write for t in tools),
-				reference_doctype=reference_doctype,
-				reference_name=reference_name,
-			),
-		}
-	]
-	# Ground the model in real data for any ID/email the user typed, so it
-	# never has to guess whether a record or user exists.
-	facts = database_facts(message)
-	if facts:
-		llm_messages.append({"role": "system", "content": "Database lookup for what the user typed (real data):\n" + facts})
-	if not bot or bot.include_diagnostic_context:
-		diagnostic_context = build_context_payload(reference_doctype, reference_name, bool(tools))
-		if diagnostic_context is not None:
-			llm_messages.append(
-				{
-					"role": "system",
-					"content": "Diagnostic context (read-only, JSON):\n"
-					+ json.dumps(diagnostic_context, default=str, indent=2),
-				}
-			)
-	llm_messages.extend(convo.as_chat_history())
-	if images:
-		llm_messages[-1]["images"] = images
-
-	max_rounds = get_settings().get("max_tool_rounds") or 2
-	try:
-		if bot and bot.engine == "OpenAI Agents SDK":
-			from support_ai.ai.agents_engine import run_agents_sdk
-
-			result = run_agents_sdk(config, llm_messages, tools, ctx, bot=bot, max_turns=max_rounds * 2 + 2)
-		else:
-			from support_ai.ai.runner import run_builtin
-
-			result = run_builtin(config, llm_messages, tools, ctx, max_rounds=max_rounds)
-	except LLMError as e:
-		debug["error"] = str(e)
-		debug["tool_calls"] = ctx.debug
-		return _reply(convo, f"⚠️ Support AI could not get a response: {e}", bot=bot, debug=debug)
-
-	thinking, reply = extract_thinking(result.get("content"), result.get("thinking"))
-	debug["tool_calls"] = ctx.debug
-	return _reply(convo, reply or "(no response)", thinking=thinking, bot=bot, debug=debug)
-
-
-def _can_use_router(bot, has_reference, attachments):
-	if has_reference or attachments:
-		return False
-	if not bot:
-		return True
-	return bool(bot.include_lookup_tool and not bot.functions and not bot.enable_file_search)
-
-
-def _reply(convo, content, thinking=None, bot=None, debug=None):
-	debug_info = json.dumps(debug, default=str, indent=1) if bot and bot.debug_mode and debug else None
-	convo.append_message("Assistant", content, thinking=thinking or None, debug_info=debug_info)
-	convo.save(ignore_permissions=False)
-	return {"conversation": convo.name, "reply": content, "thinking": thinking or None, "debug_info": debug_info}
+	turn = ChatTurn(convo, bot, message, reference_doctype, reference_name, attachments, list_context)
+	return turn.run()
 
 
 def build_context_payload(reference_doctype, reference_name, has_tools=True):

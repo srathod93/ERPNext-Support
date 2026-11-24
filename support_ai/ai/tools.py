@@ -41,6 +41,11 @@ class ToolContext:
 	conversation: str | None = None
 	debug: list = field(default_factory=list)
 	seen_calls: set = field(default_factory=set)
+	# stream(event, text): pushes progress/tokens to the chat (None = off).
+	stream: Callable | None = None
+	# Write calls held for the user's Confirm click (see confirm_write_actions).
+	pending_actions: list = field(default_factory=list)
+	confirmed: bool = False
 
 
 def get_tools(bot, has_reference, config):
@@ -128,6 +133,11 @@ def run_tool(spec, args, ctx):
 			_debug(ctx, spec, args, result)
 			return result
 
+	if spec.is_write and not ctx.confirmed:
+		result = _hold_for_confirmation(spec, args, ctx)
+		_debug(ctx, spec, args, result)
+		return result
+
 	savepoint = f"support_ai_tool_{frappe.generate_hash(length=8)}"
 	frappe.db.savepoint(savepoint)
 	try:
@@ -152,6 +162,25 @@ def run_tool(spec, args, ctx):
 		_log_action(spec, args, ctx, "Success", result=result)
 	_debug(ctx, spec, args, result)
 	return result
+
+
+def _hold_for_confirmation(spec, args, ctx):
+	"""Stores a write call instead of running it; the chat shows a Confirm /
+	Cancel card and confirm_write_actions() runs it on Confirm. Held for 30
+	minutes, only for the same user and conversation."""
+	action_id = frappe.generate_hash(length=12)
+	frappe.cache.set_value(
+		f"support_ai_pending_action:{action_id}",
+		{"user": frappe.session.user, "conversation": ctx.conversation, "tool": spec.name, "args": args},
+		expires_in_sec=1800,
+	)
+	summary = f"{spec.description or spec.name}: {json.dumps(args, default=str)[:300]}"
+	ctx.pending_actions.append({"type": "confirm_write", "action_id": action_id, "label": spec.name, "summary": summary})
+	return {
+		"status": "awaiting_user_confirmation",
+		"message": "Nothing has been changed yet. Tell the user what will be done and ask them to press Confirm "
+		"under your reply. Do not say it is done.",
+	}
 
 
 def result_text(result):

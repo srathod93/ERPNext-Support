@@ -12,11 +12,11 @@ from support_ai.ai.tools import result_text, run_tool
 MAX_TOOL_CONTEXT_CHARS = 4000
 
 
-def chat_with_image_fallback(messages, tools, config):
+def chat_with_image_fallback(messages, tools, config, on_token=None):
 	"""Not every local model is vision-capable - if a call carrying images
 	fails, retry once without them rather than failing the whole turn."""
 	try:
-		return chat_message(messages, tools=tools, config=config)
+		return chat_message(messages, tools=tools, config=config, on_token=on_token)
 	except LLMError:
 		if not any(m.get("images") for m in messages):
 			raise
@@ -24,7 +24,7 @@ def chat_with_image_fallback(messages, tools, config):
 		stripped.append(
 			{"role": "system", "content": "Note: the attached image(s) could not be sent - this model cannot read images."}
 		)
-		return chat_message(stripped, tools=tools, config=config)
+		return chat_message(stripped, tools=tools, config=config, on_token=on_token)
 
 
 def run_builtin(config, llm_messages, tools, ctx, max_rounds=2):
@@ -56,7 +56,7 @@ def run_builtin(config, llm_messages, tools, ctx, max_rounds=2):
 
 	for _round in range(max(max_rounds, 1)):
 		messages = base_messages + _tool_context_messages(all_results, original_question, allow_retry=True)
-		assistant_message = chat_with_image_fallback(messages, tool_schemas, config)
+		assistant_message = chat_with_image_fallback(messages, tool_schemas, config, _token_sink(ctx))
 		if assistant_message.get("thinking"):
 			thinking.append(assistant_message["thinking"])
 		tool_calls = assistant_message.get("tool_calls") or []
@@ -76,6 +76,8 @@ def run_builtin(config, llm_messages, tools, ctx, max_rounds=2):
 				continue
 			ctx.seen_calls.add(key)
 			made_new_call = True
+			if ctx.stream:
+				ctx.stream("status", f"Looking up data ({spec.name})...")
 
 			all_results.append({"tool": spec.name, "called_with": args, "result": run_tool(spec, args, ctx)})
 
@@ -94,10 +96,20 @@ def run_builtin(config, llm_messages, tools, ctx, max_rounds=2):
 	# Force a final answer (tools off) from whatever's been gathered so far,
 	# whether we hit the round cap or the model stalled on a repeat call.
 	final_messages = base_messages + _tool_context_messages(all_results, original_question, allow_retry=False)
-	final = chat_with_image_fallback(final_messages, None, config)
+	final = chat_with_image_fallback(final_messages, None, config, _token_sink(ctx))
 	if final.get("thinking"):
 		thinking.append(final["thinking"])
 	return {"content": final.get("content") or "(no response)", "thinking": "\n\n".join(thinking)}
+
+
+def _token_sink(ctx):
+	"""on_token callback that streams text to the chat, or None. Each model
+	call starts with a reset, so text from a round that ends in a tool call
+	is replaced by the next round's answer."""
+	if not ctx.stream:
+		return None
+	ctx.stream("reset", "")
+	return lambda text: ctx.stream("token", text)
 
 
 def _tool_context_messages(all_results, original_question, allow_retry):

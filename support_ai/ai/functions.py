@@ -15,6 +15,8 @@ import json
 import frappe
 from frappe import _
 
+from support_ai.diagnostics.masking import mask_record
+
 READ_TYPES = (
 	"Get Document",
 	"Get Multiple Documents",
@@ -317,7 +319,7 @@ def _compact(d):
 def get_document(function_doc, args):
 	from frappe.client import get
 
-	return _compact(get(function_doc.reference_doctype, _require(args, "document_id")))
+	return mask_record(_compact(get(function_doc.reference_doctype, _require(args, "document_id"))))
 
 
 def get_multiple_documents(function_doc, args):
@@ -356,7 +358,7 @@ def get_list(function_doc, args):
 
 	limit = min(int(args.get("limit") or 20), MAX_LIST_LIMIT)
 	rows = frappe.get_list(dt, filters=filters, fields=list(dict.fromkeys(fields)), order_by=order_by, limit_page_length=limit)
-	return {"doctype": dt, "count": len(rows), "records": rows}
+	return {"doctype": dt, "count": len(rows), "records": mask_record(rows)}
 
 
 def get_value(function_doc, args):

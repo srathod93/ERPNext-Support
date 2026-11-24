@@ -1,311 +1,505 @@
 # Copyright (c) 2026, shyam8848 and contributors
 # For license information, please see license.txt
 
-"""Deterministic routing for "find/list/give me the id" questions.
+"""Deterministic routing for data questions ("find/list/count/latest ...").
 
-Small CPU-friendly local models (1.5B-3B) are unreliable at tool calling -
-asked "give the purchase invoice id" they answer from nothing instead of
-calling lookup_records. So for plain data questions we don't depend on the
-model at all: detect the DocType, a month/year date range and a name filter
-from the text here, run lookup_records (which goes through frappe.get_list,
-so the asking user's permissions apply), and format the real rows. Anything
-that doesn't look like a data question still goes to the LLM as before."""
+Small CPU-friendly local models (1.5B-3B) are unreliable at tool calling, so
+plain data questions never depend on the model: this module turns the text
+into lookup plans (DocType, filters, limit, ...), and answers.py runs them
+through permission-checked get_list calls and formats the real rows.
+Anything that doesn't look like a data question returns None and goes to
+the LLM.
 
-import calendar
-import datetime
-import difflib
+Order of checks: things typed verbatim (document IDs, emails) are looked up
+in the database first, then ready-made questions (attention inbox, stock,
+outstanding), then DocType + wording."""
+
 import re
 
 import frappe
-from frappe.utils import cint, fmt_money, getdate, nowdate
+from frappe.utils import cint
 
-from support_ai.diagnostics.lookup import MAX_LIMIT, lookup_records
-
-DATA_INTENT_WORDS = {
-	"give", "show", "list", "find", "get", "fetch", "search", "display", "latest", "last", "recent",
-	"newest", "oldest", "first", "id", "ids", "email", "emails", "count", "many", "number", "details",
-	"which", "any", "all", "records", "names", "mobile", "phone", "status", "total", "amount", "top",
-	"how", "what", "who", "whose", "highest", "lowest", "biggest", "largest", "smallest", "pending",
-	"with", "where", "having", "state",
-}
-
-# Wording that means "help me fix/understand something" - always the LLM's job.
-DIAGNOSTIC_PHRASES = (
-	"why", "error", "cannot", "can t", "cant", "not able", "unable", "how do", "how to", "how can",
-	"fix", "issue", "problem", "not working", "failed", "fails", "explain", "what is a", "what is the use",
+from support_ai.diagnostics import filters as wording
+from support_ai.diagnostics.insights import (
+	OUTSTANDING_WORDS,
+	STOCK_WORDS,
+	sum_field,
+	wants_attention,
+	wants_sum,
 )
-
-# Words that are never part of a person/party name filter.
-STOP_WORDS = DATA_INTENT_WORDS | {
-	"a", "an", "the", "of", "for", "in", "on", "at", "to", "me", "my", "it", "its", "is", "are", "was",
-	"and", "or", "with", "from", "by", "this", "that", "these", "those", "please", "pls", "plz", "what",
-	"whose", "who", "how", "one", "two", "three", "five", "ten", "some", "do", "does", "you", "can",
-	"could", "would", "tell", "about", "name", "month", "year", "today", "yesterday", "week", "date",
-	"created", "made", "entry", "entries", "record", "doc", "document", "documents", "no", "number",
-	"top", "only", "us", "i", "want", "need", "kindly", "also", "them", "their", "his", "her",
-	"between", "since", "till", "until", "upto", "current", "previous", "next",
-	"we", "don", "dont", "t", "s", "not", "doesn", "isn", "didn", "which", "whom", "lasted", "lates", "latset",
-	# greetings / filler
-	"hello", "hi", "hey", "hii", "thanks", "thank", "dear", "sir", "madam", "good", "morning", "evening",
-	"ok", "okay", "bro", "team", "where", "has", "have", "having", "be", "been", "there", "value", "set",
-	"equal", "equals", "as", "like", "than", "state", "type", "oldest", "earliest", "highest", "largest",
-	"biggest", "lowest", "smallest", "much", "so", "far", "currently", "now", "just",
-}
-
-# Generic words that don't name one DocType: answer for each listed one.
-DOCTYPE_ALIASES = {
-	"invoice": ["Sales Invoice", "Purchase Invoice"],
-	"invoices": ["Sales Invoice", "Purchase Invoice"],
-	"bill": ["Purchase Invoice"],
-	"bills": ["Purchase Invoice"],
-	"order": ["Sales Order", "Purchase Order"],
-	"orders": ["Sales Order", "Purchase Order"],
-	"payment": ["Payment Entry"],
-	"payments": ["Payment Entry"],
-	"jv": ["Journal Entry"],
-	"jvs": ["Journal Entry"],
-}
+from support_ai.diagnostics.lookup import MAX_LIMIT
+from support_ai.diagnostics.vocabulary import (
+	DATA_INTENT_WORDS,
+	DIAGNOSTIC_PHRASES,
+	NEGATION_WORDS,
+	STOP_WORDS,
+	contains_phrase,
+	detect_targets,
+	extract_entities,
+	find_document,
+	has_fuzzy_intent,
+	is_fuzzy,
+	previous_doctype,
+	tokens_of,
+)
 
 # Fields whose values the user names directly ("overdue invoices").
 VALUE_FIELDS = ("status", "workflow_state")
-
-MONTHS = [m.lower() for m in calendar.month_name[1:]]
-MONTH_ABBR = {m.lower(): i for i, m in enumerate(calendar.month_abbr) if m}
-
 DATE_FIELD_PREFERENCE = ("posting_date", "transaction_date", "date", "bill_date", "schedule_date")
-
 # Intent words that can also legitimately name a column to show.
 FIELD_HINT_WORDS = {"email", "emails", "mobile", "phone", "status", "total", "amount"}
-
-NON_VALUE_FIELDTYPES = {"Section Break", "Column Break", "Tab Break", "Table", "Table MultiSelect", "HTML", "Button", "Fold"}
-
+NON_VALUE_FIELDTYPES = {
+	"Section Break",
+	"Column Break",
+	"Tab Break",
+	"Table",
+	"Table MultiSelect",
+	"HTML",
+	"Button",
+	"Fold",
+}
 NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10}
+# Requests to change data are never answered by the read-only router.
+ACTION_WORDS = {
+	"create",
+	"make",
+	"submit",
+	"cancel",
+	"delete",
+	"update",
+	"amend",
+	"approve",
+	"reject",
+	"change",
+	"modify",
+}
+# On a form, these ask about the open document itself.
+REFERENCE_WORDS = {
+	"items",
+	"item",
+	"taxes",
+	"history",
+	"approved",
+	"approval",
+	"approvals",
+	"created",
+	"owner",
+	"details",
+	"who",
+}
+LIST_CONTEXT_WORDS = {"these", "this list", "filtered", "here", "current list", "in this view"}
 
 
-def _doctype_names():
-	def _load():
-		return frappe.get_all("DocType", filters={"istable": 0, "issingle": 0}, pluck="name")
+def plan_lookup(message, history=None, context=None, reference=None):
+	"""Turns a message into lookup plans, or None when it isn't a plain data
+	question (the caller then uses the LLM).
 
-	try:
-		return frappe.cache.get_value("support_ai_routable_doctypes", _load, expires_in_sec=3600)
-	except Exception:
-		# Redis down shouldn't break lookups - the query itself is cheap.
-		return _load()
+	Parameters:
+		message (str, required): The user's message.
+		history (list[str], optional): Earlier user messages, oldest first.
+		context (dict, optional): {"doctype", "filters"} of the list view the
+			chat was opened from.
+		reference (tuple, optional): (doctype, name) of the form the chat was
+			opened from - "who created this" / "show items" are about it.
 
+	Returns:
+		list[dict] | None: Plans for answers.run_planned_lookup.
+	"""
+	emails, ids, numbers, rest = extract_entities(message)
+	tokens = tokens_of(rest)
+	padded = " " + " ".join(tokens) + " "
 
-def _tokens(text):
-	return re.findall(r"[a-z0-9]+", text.lower())
+	if any(f" {p} " in padded for p in DIAGNOSTIC_PHRASES) or set(tokens) & ACTION_WORDS:
+		return None
+	if not (emails or ids) and wants_attention(tokens):
+		return [{"kind": "attention"}]
+	targets = detect_targets(rest, tokens)
+	if not (emails or ids or targets) and not _looks_like_data_question(tokens, context):
+		return None
 
+	if reference and not ids:
+		return _reference_plans(reference, targets, tokens)
+	special = _ready_made_plan(rest, tokens, targets, ids)
+	if special:
+		return [special]
 
-# --- Entities typed verbatim: emails and document IDs ----------------------------
-#
-# These must be pulled out of the message BEFORE it is split into words -
-# otherwise "ACC-PINV-2026-17381" turns into a 2026 date filter plus a name
-# search for "acc pinv", and an email turns into "api user jfl erpnext com".
+	hint = targets[0][0] if len(targets) == 1 else None
+	doc_plans = _document_plans(ids, numbers if hint else [], hint, tokens)
+	if doc_plans:
+		return doc_plans
 
-EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-# Hyphen/slash-joined code containing a digit: ACC-PINV-2026-17381, SO/24/001.
-ID_RE = re.compile(r"(?<![\w@])[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+(?![\w@])")
-PLAIN_DATE_RE = re.compile(r"\d{1,4}[-/]\d{1,2}[-/]\d{1,4}")
-# Long bare numbers (e.g. a Supplier code 810000011) - only ever tried against
-# a DocType the user named, never guessed across all of them.
-LONG_NUMBER_RE = re.compile(r"(?<![\w-])\d{6,}(?![\w-])")
+	if emails:
+		targets = _targets_for_email(targets, tokens, history)
+		if not targets:
+			return [{"kind": "user_info", "email": e} for e in emails]
 
+	if len(targets) > 1:
+		return [_clarify_plan(message, targets)]
+	if not targets and context and context.get("doctype"):
+		targets = [(context["doctype"], " ".join(tokens_of(context["doctype"])))]
+	if not targets:
+		return None
 
-def _extract_entities(message):
-	"""Returns (emails, ids, numbers, remaining_text)."""
-	emails = list(dict.fromkeys(EMAIL_RE.findall(message)))
-	text = EMAIL_RE.sub(" ", message)
-
-	ids = []
-	for m in ID_RE.findall(text):
-		if any(c.isdigit() for c in m) and not PLAIN_DATE_RE.fullmatch(m):
-			ids.append(m)
-	ids = list(dict.fromkeys(ids))
-	for i in ids:
-		text = text.replace(i, " ")
-
-	numbers = list(dict.fromkeys(LONG_NUMBER_RE.findall(text)))
-	return emails, ids, numbers, text
-
-
-def _naming_prefixes():
-	"""{doctype: [literal prefix, ...]} from every naming series / autoname,
-	e.g. "ACC-PINV-.YYYY.-" -> "ACC-PINV-". Used to tell which DocType a
-	typed ID belongs to without probing every table."""
-
-	def _load():
-		raw = {}
-		for parent, options in frappe.get_all(
-			"DocField", {"fieldname": "naming_series"}, ["parent", "options"], as_list=True
-		):
-			raw.setdefault(parent, []).append(options or "")
-		for dt, options in frappe.get_all(
-			"Custom Field", {"fieldname": "naming_series"}, ["dt", "options"], as_list=True
-		):
-			raw.setdefault(dt, []).append(options or "")
-		for dt, value in frappe.get_all(
-			"Property Setter", {"field_name": "naming_series", "property": "options"}, ["doc_type", "value"], as_list=True
-		):
-			raw.setdefault(dt, []).append(value or "")
-		for dt, autoname in frappe.get_all("DocType", {"autoname": ["like", "%#%"]}, ["name", "autoname"], as_list=True):
-			raw.setdefault(dt, []).append((autoname or "").replace("format:", "").replace("naming_series:", ""))
-
-		out = {}
-		for dt, option_blobs in raw.items():
-			prefixes = set()
-			for blob in option_blobs:
-				for option in blob.split("\n"):
-					# Literal text before the first placeholder (.YYYY. / .#### / {field}).
-					prefix = re.split(r"[.{#]", option.strip(), maxsplit=1)[0].strip().upper()
-					if len(prefix) >= 2:
-						prefixes.add(prefix)
-			if prefixes:
-				out[dt] = sorted(prefixes, key=len, reverse=True)
-		return out
-
-	try:
-		return frappe.cache.get_value("support_ai_naming_prefixes", _load, expires_in_sec=3600)
-	except Exception:
-		return _load()
-
-
-def find_document(doc_id, doctype_hint=None):
-	"""Resolves a typed ID to (doctype, name) by exact name match, or None.
-	Tries the DocType the user named first, then DocTypes whose naming
-	series prefix the ID starts with (longest prefix first)."""
-	candidates = []
-	if doctype_hint:
-		candidates.append(doctype_hint)
-	upper = doc_id.upper()
-	ranked = []
-	for dt, prefixes in _naming_prefixes().items():
-		best = next((p for p in prefixes if upper.startswith(p)), None)
-		if best:
-			ranked.append((len(best), dt))
-	candidates += [dt for _n, dt in sorted(ranked, reverse=True) if dt != doctype_hint]
-
-	for dt in candidates[:15]:
-		try:
-			name = frappe.db.get_value(dt, doc_id, "name")
-		except Exception:
-			continue
-		if name:
-			return dt, name
-	return None
-
-
-def _user_for_email(email):
-	return frappe.db.get_value("User", {"name": email}, ["name", "full_name"], as_dict=True) or frappe.db.get_value(
-		"User", {"email": email}, ["name", "full_name"], as_dict=True
-	)
-
-
-def _email_fields(meta):
+	list_filters = (context or {}).get("filters") if _refers_to_list(tokens, context, targets) else None
 	return [
-		df.fieldname
-		for df in meta.fields
-		if df.fieldtype == "Data" and (df.options == "Email" or "email" in df.fieldname)
+		_plan_for(dt, dt_norm, rest, tokens, emails=emails, list_filters=list_filters)
+		for dt, dt_norm in targets
 	]
 
 
-def _is_fuzzy(token, words, cutoff=0.75):
-	return len(token) >= 4 and bool(difflib.get_close_matches(token, words, n=1, cutoff=cutoff))
-
-
-def _detect_doctype(text):
-	"""Longest DocType name appearing in the text as whole words, also
-	accepting a plural ("purchase invoices") and ignoring case. A match that
-	is really just a field label of another matched DocType is dropped - in
-	"sales invoices with workflow state X", "Workflow State" is Sales
-	Invoice's field, not the DocType being asked about."""
-	norm = " " + " ".join(_tokens(text)) + " "
-	matches = []
-	for name in _doctype_names():
-		dt_norm = " ".join(_tokens(name))
-		if dt_norm and any(f" {v} " in norm for v in (dt_norm, dt_norm + "s", dt_norm + "es")):
-			matches.append((name, dt_norm))
-	if len(matches) > 1:
-		labels_by_dt = {
-			name: {" ".join(_tokens(df.label or "")) for df in frappe.get_meta(name).fields}
-			for name, _n in matches
-		}
-		matches = [
-			(name, dt_norm)
-			for name, dt_norm in matches
-			if not any(dt_norm in labels_by_dt[other] for other, _o in matches if other != name)
-		] or matches
-	return max(matches, key=lambda m: len(m[1])) if matches else None
-
-
-def _match_month(token):
-	if token in MONTH_ABBR and len(token) >= 3:
-		return MONTH_ABBR[token]
-	if token in MONTHS:
-		return MONTHS.index(token) + 1
-	if len(token) >= 5 and token not in STOP_WORDS:
-		# Typo tolerance, e.g. "augest" -> august, "febuary" -> february. Same
-		# first letter and 5+ chars, so ordinary words ("many") aren't months.
-		close = difflib.get_close_matches(token, MONTHS, n=1, cutoff=0.75)
-		if close and close[0][0] == token[0]:
-			return MONTHS.index(close[0]) + 1
+def _reference_plans(reference, targets, tokens):
+	"""On a form: document-level questions are about that document; anything
+	else that names no other DocType is a diagnosis for the LLM (None)."""
+	other_targets = [t for t in targets if t[0] != reference[0]]
+	if other_targets:
+		return [_plan_for(dt, dt_norm, " ".join(tokens), tokens) for dt, dt_norm in other_targets[:1]]
+	if set(tokens) & REFERENCE_WORDS:
+		return [{"kind": "document", "doctype": reference[0], "name": reference[1], "tokens": tokens}]
 	return None
 
 
-def _detect_date_range(tokens):
-	"""Returns ((from_date, to_date), label, consumed_tokens) or (None, None, set())."""
-	today = getdate(nowdate())
-	joined = " ".join(tokens)
-	years = [cint(t) for t in tokens if re.fullmatch(r"(19|20)\d\d", t)]
-	year = years[0] if years else None
+def _looks_like_data_question(tokens, context):
+	"""True when the wording asks for data (intent words, typos of them, or
+	any question asked from a list view)."""
+	if not tokens:
+		return False
+	return (
+		bool(set(tokens) & DATA_INTENT_WORDS)
+		or has_fuzzy_intent(tokens)
+		or bool(context and context.get("doctype"))
+	)
 
-	if "today" in tokens:
-		return (today, today), "today", {"today"}
-	if "yesterday" in tokens:
-		d = today - datetime.timedelta(days=1)
-		return (d, d), "yesterday", {"yesterday"}
-	if "this month" in joined or "current month" in joined:
-		start = today.replace(day=1)
-		return (start, today), "this month", {"this", "current", "month"}
-	if "last month" in joined or "previous month" in joined:
-		end = today.replace(day=1) - datetime.timedelta(days=1)
-		return (end.replace(day=1), end), "last month", {"last", "previous", "month"}
 
-	for t in tokens:
-		month = _match_month(t)
-		if month:
-			y = year or today.year
-			last_day = calendar.monthrange(y, month)[1]
-			start, end = datetime.date(y, month, 1), datetime.date(y, month, last_day)
-			return (start, end), f"{calendar.month_name[month]} {y}", {t, str(y)}
+def _ready_made_plan(text, tokens, targets, ids):
+	"""Stock balance / outstanding plans, or None."""
+	if ids:
+		return None
+	target_names = {t[0] for t in targets}
+	words = set(tokens)
 
-	if year:
-		return (datetime.date(year, 1, 1), datetime.date(year, 12, 31)), str(year), {str(year)}
+	if words & STOCK_WORDS and ("item" in words or "of" in words) and not target_names - {"Item", "Bin"}:
+		item_words = _words_after(tokens, ("item", "of", "for"))
+		codes = wording.search_link("Item", item_words) if item_words else []
+		return {"kind": "stock", "item_codes": codes, "words": item_words}
 
-	return None, None, set()
+	invoice_targets = {"Purchase Invoice", "Sales Invoice"} & target_names
+	if words & OUTSTANDING_WORDS and not (target_names - {"Supplier", "Customer"}) and not invoice_targets:
+		party_type = "Customer" if words & {"customer", "customers", "receivable"} else "Supplier"
+		party_words = _words_after(tokens, (party_type.lower(), party_type.lower() + "s"))
+		names = wording.search_link(party_type, party_words) if party_words else None
+		return {"kind": "outstanding", "party_type": party_type, "party_names": names, "words": party_words}
+	return None
+
+
+def _words_after(tokens, keys):
+	"""Non-stop words following the last occurrence of any key word."""
+	positions = [i for i, t in enumerate(tokens) if t in keys]
+	if not positions:
+		return []
+	return wording.value_words(tokens, positions[-1] + 1, STOP_WORDS | {"stock", "balance", "item", "items"})
+
+
+def _document_plans(ids, numbers, hint, tokens):
+	"""Plans for exact document IDs typed in the message (found or missing)."""
+	plans, missing = [], []
+	for doc_id in ids + numbers:
+		found = find_document(doc_id, hint)
+		if found:
+			plans.append({"kind": "document", "doctype": found[0], "name": found[1], "tokens": tokens})
+		elif doc_id in ids:
+			missing.append(doc_id)
+	return plans + [{"kind": "missing_id", "doc_id": i, "doctype": hint} for i in missing]
+
+
+def _targets_for_email(targets, tokens, history):
+	"""Keeps the earlier DocType for a correction ("we don't have supplier
+	x@y.com") or when the message names none."""
+	ctx = previous_doctype(history)
+	is_correction = bool(set(tokens) & NEGATION_WORDS)
+	if ctx and (not targets or (is_correction and ctx[0] not in {t[0] for t in targets})):
+		return [ctx]
+	return targets
+
+
+def _clarify_plan(message, targets):
+	"""Asks which DocType a generic word ("invoice") meant, with one-click options."""
+	alias = targets[0][1]
+	options = []
+	for doctype, _w in targets:
+		prompt = re.sub(rf"\b{re.escape(alias)}\b", doctype, message, count=1, flags=re.IGNORECASE)
+		options.append({"doctype": doctype, "prompt": prompt})
+	return {"kind": "clarify", "word": alias, "options": options}
+
+
+def _refers_to_list(tokens, context, targets):
+	"""True when the user means the list view they are on ("these invoices")."""
+	if not context or not context.get("filters") or not targets or targets[0][0] != context.get("doctype"):
+		return False
+	padded = " " + " ".join(tokens) + " "
+	return any(f" {w} " in padded for w in LIST_CONTEXT_WORDS)
+
+
+def _plan_for(doctype, dt_norm, text, tokens, emails=None, list_filters=None):
+	"""Builds a list/count/sum plan for one DocType from the message wording.
+
+	Parameters:
+		doctype (str, required): DocType to list.
+		dt_norm (str, required): The words that named it.
+		text (str, required): Message text with entities removed.
+		tokens (list[str], required): Its lowercase words.
+		emails (list[str], optional): Emails typed in the message.
+		list_filters (list, optional): Filters of the list view the user is on.
+
+	Returns:
+		dict: A "list" plan.
+	"""
+	plan = _PlanBuilder(doctype, dt_norm, text, tokens)
+	plan.apply_list_filters(list_filters)
+	plan.apply_emails(emails or [])
+	plan.apply_value_fields()
+	plan.apply_dates()
+	plan.apply_amount()
+	if not emails:
+		plan.apply_links()
+		plan.apply_items()
+	plan.apply_requested_fields()
+	plan.apply_name_search(skip=bool(emails))
+	return plan.result()
+
+
+class _PlanBuilder:
+	"""Accumulates filters/labels for one DocType while marking the words
+	each step used, so leftover words can become a name search."""
+
+	def __init__(self, doctype, dt_norm, text, tokens):
+		"""Starts an empty plan for doctype from the message words."""
+		self.doctype, self.text, self.tokens = doctype, text, tokens
+		self.meta = frappe.get_meta(doctype)
+		dt_words = dt_norm.split()
+		self.consumed = set(dt_words) | {w + "s" for w in dt_words} | {w + "es" for w in dt_words}
+		# Typos of the DocType's own words ("inovoce") or of intent words ("lasted").
+		self.consumed |= {
+			t for t in tokens if is_fuzzy(t, dt_words) or is_fuzzy(t, ("latest", "recent"), 0.8)
+		}
+		self.filters, self.child_filters, self.labels, self.requested = {}, [], [], []
+		self.error, self.date_field, self.value_field, self.name_field = None, None, None, None
+		self.name_words = []
+		self.show_owner = bool({"who", "owner", "created", "creator", "made"} & set(tokens))
+
+	def apply_list_filters(self, list_filters):
+		"""Adds the list view's own filters ([[dt, field, op, value], ...])."""
+		for row in list_filters or []:
+			if (
+				len(row) >= 4
+				and row[0] == self.doctype
+				and (self.meta.has_field(row[1]) or row[1] in ("owner", "docstatus"))
+			):
+				self.filters[row[1]] = [row[2], row[3]]
+		if list_filters:
+			self.labels.append("filters of your list view")
+
+	def apply_emails(self, emails):
+		"""Email of a user -> Created By filter; other emails -> an email field."""
+		for email in emails:
+			user = frappe.db.get_value("User", email, ["name", "full_name"], as_dict=True)
+			email_fields = [
+				df.fieldname
+				for df in self.meta.fields
+				if df.fieldtype == "Data" and (df.options == "Email" or "email" in df.fieldname)
+			]
+			if user:
+				self.filters["owner"] = user.name
+				self.labels.append(f"Created By = {user.full_name or user.name} ({user.name})")
+				self.show_owner = True
+			elif email_fields:
+				self.filters[email_fields[0]] = ["like", f"%{email}%"]
+				self.labels.append(f"{self.meta.get_label(email_fields[0])} = {email}")
+			else:
+				self.error = f"'{email}' is not a User in this system, and {self.doctype} has no email field to search."
+
+	def apply_value_fields(self):
+		"""Status / workflow state named in the text; the longest match wins, so
+		"partly paid" beats "paid"."""
+		matches = []
+		for fieldname in VALUE_FIELDS:
+			matches += [
+				(len(tokens_of(o)), fieldname, o)
+				for o in _value_options(self.meta, self.doctype, fieldname)
+				if contains_phrase(self.tokens, tokens_of(o))
+			]
+		if not matches:
+			return
+		_n, fieldname, option = max(matches, key=lambda m: m[0])
+		self.filters[fieldname] = option
+		self.value_field = fieldname
+		self.consumed |= set(tokens_of(option)) | set(tokens_of(self.meta.get_label(fieldname)))
+		self.labels.append(f"{self.meta.get_label(fieldname)} = {option}")
+
+	def apply_dates(self):
+		"""Date range on the DocType's main date field."""
+		date_range, label, used = wording.detect_date_range(self.tokens, self.text, STOP_WORDS)
+		self.consumed |= used
+		if not date_range:
+			return
+		self.date_field = _date_field(self.meta)
+		self.filters[self.date_field] = ["between", [str(date_range[0]), str(date_range[1])]]
+		field_label = self.meta.get_label(self.date_field) if self.date_field != "creation" else "Created"
+		self.labels.append(
+			f"{field_label} {label if label.startswith(('since', 'up to', 'on')) else 'in ' + label}"
+		)
+
+	def apply_amount(self):
+		"""'above 1 lakh' style amount condition."""
+		found = wording.detect_amount_filter(self.meta, self.text)
+		if found:
+			field, condition, label, used = found
+			self.filters[field] = condition
+			self.labels.append(label)
+			self.consumed |= used
+
+	def apply_links(self):
+		"""'for company jio' / 'of supplier goodedge' on Link fields."""
+		skip = set(self.filters)
+		filters, labels, used, errors = wording.detect_link_filters(self.meta, self.tokens, STOP_WORDS, skip)
+		self.filters.update(filters)
+		self.labels += labels
+		self.consumed |= used
+		if errors and not filters:
+			self.error = errors[0]
+
+	def apply_items(self):
+		"""'containing item X' as a child-table filter."""
+		found = wording.detect_item_filter(self.meta, self.tokens, STOP_WORDS)
+		if found:
+			self.child_filters, label, used = found
+			self.labels.append(label)
+			self.consumed |= used
+
+	def apply_requested_fields(self):
+		"""Words that name a column to show ("email", "supplier"). Per word,
+		the exact fieldname match, else the shortest containing it."""
+		words = [
+			t
+			for t in self.tokens
+			if len(t) > 2 and t not in self.consumed and (t not in STOP_WORDS or t in FIELD_HINT_WORDS)
+		]
+		for t in words:
+			best = _best_field_for(self.meta, t)
+			if not best:
+				continue
+			if best not in self.requested:
+				self.requested.append(best)
+			self.consumed.add(t)
+
+	def apply_name_search(self, skip=False):
+		"""Leftover words become a name/title search - or an error when they
+		were meant as a status the DocType doesn't have."""
+		leftover = [
+			t
+			for t in self.tokens
+			if t not in STOP_WORDS
+			and t not in self.consumed
+			and not t.isdigit()
+			and wording.match_month(t, STOP_WORDS) is None
+		]
+		if skip or not leftover:
+			return
+		asked_for_status = bool({"status", "state", "pending"} & set(self.tokens))
+		if asked_for_status and not self.value_field:
+			self.error = self._unknown_status_message()
+			return
+		self.name_field = _name_search_field(self.meta, self.doctype)
+		self.name_words = leftover
+		self.filters[self.name_field] = ["like", "%" + "%".join(leftover) + "%"]
+		field_label = self.meta.get_label(self.name_field) if self.name_field != "name" else "ID"
+		self.labels.append(f"{field_label} like '{' '.join(leftover)}'")
+
+	def _unknown_status_message(self):
+		"""'X is not a status of DocType' plus the valid values."""
+		wanted = " ".join(
+			t for t in self.tokens if t not in self.consumed and t not in ("status", "state", "with", "is")
+		)
+		quoted = re.findall(r"[\"'“‘]([^\"'”’]+)[\"'”’]", self.text)
+		lines = [f"'{(quoted or [wanted])[0].strip()}' is not a status of {self.doctype}."]
+		for fieldname in VALUE_FIELDS:
+			options = _value_options(self.meta, self.doctype, fieldname)
+			if options:
+				lines.append(f"Valid {self.meta.get_label(fieldname)} values: {', '.join(options)}")
+		return "\n".join(lines)
+
+	def result(self):
+		"""The finished plan dict."""
+		tokens, joined = self.tokens, " ".join(self.tokens)
+		is_sum = wants_sum(tokens) and bool(sum_field(self.meta, tokens))
+		return {
+			"kind": "list",
+			"doctype": self.doctype,
+			"filters": self.filters,
+			"child_filters": self.child_filters,
+			"limit": _detect_limit(
+				[t for t in tokens if t not in self.consumed or t in ("latest", "last", "top")]
+			),
+			"order_by": _order_by(self.meta, tokens),
+			"is_count": not is_sum
+			and ("count" in tokens or any(p in joined for p in ("how many", "number of"))),
+			"is_sum": is_sum,
+			"sum_field": sum_field(self.meta, tokens) if is_sum else None,
+			"error": self.error,
+			"requested_fields": self.requested[:4],
+			"label": ", ".join(self.labels),
+			"date_field": self.date_field,
+			"value_field": self.value_field,
+			"name_words": self.name_words,
+			"name_field": self.name_field,
+			"show_owner": self.show_owner,
+		}
+
+
+def _best_field_for(meta, word):
+	"""Fieldname best matching a word: exact name, else fewest name parts."""
+	candidates = [
+		df
+		for df in meta.fields
+		if df.fieldtype not in NON_VALUE_FIELDTYPES
+		and not df.hidden
+		and (word in df.fieldname.split("_") or word in tokens_of(df.label or ""))
+	]
+	if not candidates:
+		return None
+	return min(candidates, key=lambda df: (df.fieldname != word, len(df.fieldname.split("_")))).fieldname
+
+
+def _order_by(meta, tokens):
+	"""Sort order from wording: oldest / highest / lowest, else newest first."""
+	words = set(tokens)
+	if {"oldest", "earliest"} & words:
+		return "creation asc"
+	if meta.has_field("grand_total") and {"highest", "largest", "biggest"} & words:
+		return "grand_total desc"
+	if meta.has_field("grand_total") and {"lowest", "smallest"} & words:
+		return "grand_total asc"
+	return "creation desc"
 
 
 def _date_field(meta):
-	fieldnames = {df.fieldname for df in meta.fields}
-	for f in DATE_FIELD_PREFERENCE:
-		if f in fieldnames:
-			return f
-	return "creation"
+	"""The DocType's main date field, else creation."""
+	return next((f for f in DATE_FIELD_PREFERENCE if meta.has_field(f)), "creation")
 
 
 def _name_search_field(meta, doctype):
-	fieldnames = {df.fieldname for df in meta.fields}
-	if meta.title_field and meta.title_field in fieldnames:
+	"""Field to search a typed name in: title field, *_name, title or subject."""
+	if meta.title_field and meta.has_field(meta.title_field):
 		return meta.title_field
-	for f in ("full_name", frappe.scrub(doctype) + "_name", "title", "subject"):
-		if f in fieldnames:
-			return f
-	return "name"
+	return next(
+		(f for f in ("full_name", frappe.scrub(doctype) + "_name", "title", "subject") if meta.has_field(f)),
+		"name",
+	)
 
 
 def _detect_limit(tokens):
-	for i, t in enumerate(tokens):
-		if t in ("latest", "lasted", "last", "top", "recent", "first") and i + 1 < len(tokens):
+	"""How many rows to show: 'latest 3', 'show 2 ...', 'any' (1), 'all' (10), else 5."""
+	for i, t in enumerate(tokens[:-1]):
+		if t in ("latest", "lasted", "last", "top", "recent", "first"):
 			nxt = tokens[i + 1]
 			if nxt.isdigit():
 				return min(cint(nxt), MAX_LIMIT)
@@ -315,9 +509,9 @@ def _detect_limit(tokens):
 		# A bare count like "show me 2 draft invoices" (years excluded).
 		if t.isdigit() and 0 < cint(t) <= 1000 and not re.fullmatch(r"(19|20)\d\d", t):
 			return min(cint(t), MAX_LIMIT)
-	if "any one" in " ".join(tokens) or "anyone" in tokens or "any" in tokens:
+	if "any" in tokens or "anyone" in tokens:
 		return 1
-	if any(t in tokens for t in ("all", "list", "ids", "records")):
+	if {"all", "list", "ids", "records"} & set(tokens):
 		return 10
 	return 5
 
@@ -333,453 +527,7 @@ def _value_options(meta, doctype, fieldname):
 	if fieldname == "workflow_state":
 		workflow = frappe.db.get_value("Workflow", {"document_type": doctype, "is_active": 1}, "name")
 		if workflow:
-			return list(dict.fromkeys(frappe.get_all("Workflow Document State", {"parent": workflow}, pluck="state")))
-	return []
-
-
-def _contains_phrase(tokens, phrase_tokens):
-	n = len(phrase_tokens)
-	return n and any(tokens[i : i + n] == phrase_tokens for i in range(len(tokens) - n + 1))
-
-
-def _detect_targets(message, tokens):
-	"""[(doctype, words_naming_it)] - one exact DocType, else an alias."""
-	match = _detect_doctype(message)
-	if match:
-		return [match]
-	known = set(_doctype_names())
-	for t in tokens:
-		if t in DOCTYPE_ALIASES:
-			return [(dt, t) for dt in DOCTYPE_ALIASES[t] if dt in known]
-	return []
-
-
-def previous_doctype(history):
-	"""DocType named in the most recent earlier user message, so a follow-up
-	like "we don't have supplier x@y.com" keeps talking about Purchase
-	Invoice. history: earlier user messages, oldest first."""
-	for text in reversed(history or []):
-		_e, _i, _n, rest = _extract_entities(text or "")
-		match = _detect_doctype(rest)
-		if match:
-			return match
-	return None
-
-
-def plan_lookup(message, history=None):
-	"""Returns a list of lookup plans (one per DocType), or None if this
-	doesn't look like a plain data question - the caller then uses the LLM.
-
-	Anything typed verbatim that can be checked against the database (a
-	document ID, an email) is, before any wording-based guessing."""
-	emails, ids, numbers, rest = _extract_entities(message)
-	tokens = _tokens(rest)
-	has_entity = bool(emails or ids)
-
-	if not has_entity and (not tokens or not (set(tokens) & DATA_INTENT_WORDS) and not _has_fuzzy_intent(tokens)):
-		return None
-	padded = " " + " ".join(tokens) + " "
-	if not has_entity and any(f" {p} " in padded for p in DIAGNOSTIC_PHRASES):
-		return None
-
-	targets = _detect_targets(rest, tokens)
-
-	# 1. Exact document IDs: "ACC-PINV-2026-17381", or a long number when a
-	#    DocType was named ("supplier 810000011").
-	hint = targets[0][0] if len(targets) == 1 else None
-	doc_plans, missing = [], []
-	for doc_id in ids + (numbers if hint else []):
-		found = find_document(doc_id, hint)
-		if found:
-			doc_plans.append(_document_plan(found[0], found[1], tokens))
-		elif doc_id in ids:
-			missing.append(doc_id)
-	if doc_plans or missing:
-		return doc_plans + [{"kind": "missing_id", "doc_id": i, "doctype": hint} for i in missing]
-
-	# 2. Emails: filter the list by who created it (or an email field). A
-	#    correction ("we don't have supplier x@y.com") keeps the earlier
-	#    DocType rather than switching to the one it says is wrong.
-	if emails:
-		ctx = previous_doctype(history)
-		is_correction = bool(set(tokens) & NEGATION_WORDS)
-		if ctx and (not targets or (is_correction and ctx[0] not in {t[0] for t in targets})):
-			targets = [ctx]
-		if not targets:
-			return [{"kind": "user_info", "email": e} for e in emails]
-
-	if not targets:
-		return None
-	return [_plan_for(doctype, dt_norm, rest, tokens, emails=emails) for doctype, dt_norm in targets]
-
-
-NEGATION_WORDS = {"not", "don", "dont", "doesn", "isn", "no", "wrong", "didn", "never"}
-
-
-def _has_fuzzy_intent(tokens):
-	"""True when a word is a typo of a data-intent word ("lasted", "lates")."""
-	return any(_is_fuzzy(t, ("latest", "show", "give", "list", "find", "recent"), 0.8) for t in tokens)
-
-
-def _document_plan(doctype, name, tokens):
-	"""Plan for showing one exact document the user named by ID."""
-	return {"kind": "document", "doctype": doctype, "name": name, "tokens": tokens}
-
-
-def _plan_for(doctype, dt_norm, message, tokens, emails=None):
-	"""Builds a list/count plan for one DocType from the message wording."""
-	meta = frappe.get_meta(doctype)
-	joined = " ".join(tokens)
-
-	dt_words = dt_norm.split()
-	consumed = set(dt_words) | {w + "s" for w in dt_words} | {w + "es" for w in dt_words}
-	# Typos of the DocType's own words ("inovoce") or of intent words ("lasted").
-	consumed |= {t for t in tokens if _is_fuzzy(t, dt_words) or _is_fuzzy(t, ("latest", "recent"), 0.8)}
-
-	filters = {}
-	labels = []
-	error = None
-	show_owner = bool({"who", "owner", "created", "creator", "made"} & set(tokens))
-
-	for email in emails or []:
-		user = _user_for_email(email)
-		email_fields = _email_fields(meta)
-		if user:
-			filters["owner"] = user.name
-			labels.append(f"Created By = {user.full_name or user.name} ({user.name})")
-			show_owner = True
-		elif email_fields:
-			filters[email_fields[0]] = ["like", f"%{email}%"]
-			labels.append(f"{meta.get_label(email_fields[0])} = {email}")
-		else:
-			error = f"'{email}' is not a User in this system, and {doctype} has no email field to search."
-
-	# Status / workflow state named in the text: longest matching value wins,
-	# so "partly paid" beats "paid" and "overdue and discounted" beats "overdue".
-	value_matches = []
-	for fieldname in VALUE_FIELDS:
-		for option in _value_options(meta, doctype, fieldname):
-			opt_tokens = _tokens(option)
-			if _contains_phrase(tokens, opt_tokens):
-				value_matches.append((len(opt_tokens), fieldname, option, opt_tokens))
-	if value_matches:
-		_n, fieldname, option, opt_tokens = max(value_matches, key=lambda m: m[0])
-		filters[fieldname] = option
-		consumed |= set(opt_tokens) | set(_tokens(meta.get_label(fieldname)))
-		labels.append(f"{meta.get_label(fieldname)} = {option}")
-
-	date_field = None
-	date_range, date_label, date_tokens = _detect_date_range(tokens)
-	consumed |= date_tokens
-	if date_range:
-		date_field = _date_field(meta)
-		filters[date_field] = ["between", [str(date_range[0]), str(date_range[1])]]
-		labels.append(f"{meta.get_label(date_field) if date_field != 'creation' else 'Created'} in {date_label}")
-
-	# Requested columns: a word that names a field, e.g. "email", "status".
-	# Per word, take the single best field - an exact fieldname match, else
-	# the shortest fieldname/label containing it - so "email" means `email`,
-	# not `send_welcome_email` too.
-	field_words = [
-		t for t in tokens
-		if len(t) > 2 and t not in consumed and (t not in STOP_WORDS or t in FIELD_HINT_WORDS)
-	]
-	requested_fields = []
-	for t in field_words:
-		candidates = [
-			df for df in meta.fields
-			if df.fieldtype not in NON_VALUE_FIELDTYPES and not df.hidden
-			and (t in df.fieldname.split("_") or t in _tokens(df.label or ""))
-		]
-		if not candidates:
-			continue
-		best = min(candidates, key=lambda df: (df.fieldname != t, len(df.fieldname.split("_"))))
-		if best.fieldname not in requested_fields:
-			requested_fields.append(best.fieldname)
-		consumed.add(t)
-
-	leftover = [
-		t for t in tokens
-		if t not in STOP_WORDS and t not in consumed and not t.isdigit() and _match_month(t) is None
-	]
-	if emails:
-		# The email already identifies who/what - other words are filler.
-		leftover = []
-
-	asked_for_status = bool({"status", "state"} & set(tokens)) or "pending" in tokens
-	search_field = None
-	if leftover and asked_for_status and not value_matches:
-		# They asked for a status we don't have - say so and list the real
-		# ones, rather than silently turning it into a name search.
-		wanted = " ".join(t for t in tokens if t not in consumed and t not in ("status", "state", "with", "is"))
-		wanted = re.findall(r"[\"'\u201c\u2018]([^\"'\u201d\u2019]+)[\"'\u201d\u2019]", message) or [wanted]
-		lines = [f"'{wanted[0].strip()}' is not a status of {doctype}."]
-		for fieldname in VALUE_FIELDS:
-			options = _value_options(meta, doctype, fieldname)
-			if options:
-				lines.append(f"Valid {meta.get_label(fieldname)} values: {', '.join(options)}")
-		error = "\n".join(lines)
-	elif leftover:
-		search_field = _name_search_field(meta, doctype)
-		filters[search_field] = ["like", "%" + "%".join(leftover) + "%"]
-		labels.append(f"{meta.get_label(search_field) if search_field != 'name' else 'ID'} like '{' '.join(leftover)}'")
-
-	order_by = "creation desc"
-	if {"oldest", "earliest"} & set(tokens):
-		order_by = "creation asc"
-	elif meta.has_field("grand_total") and {"highest", "largest", "biggest"} & set(tokens):
-		order_by = "grand_total desc"
-	elif meta.has_field("grand_total") and {"lowest", "smallest"} & set(tokens):
-		order_by = "grand_total asc"
-
-	is_count = "count" in tokens or any(p in joined for p in ("how many", "number of", "total number"))
-
-	return {
-		"kind": "list",
-		"doctype": doctype,
-		"filters": filters,
-		"limit": _detect_limit(tokens),
-		"order_by": order_by,
-		"is_count": is_count,
-		"error": error,
-		"requested_fields": requested_fields[:4],
-		"label": ", ".join(labels),
-		"date_field": date_field,
-		"value_field": value_matches and max(value_matches, key=lambda m: m[0])[1],
-		"name_words": leftover if search_field else [],
-		"name_field": search_field,
-		"show_owner": show_owner,
-	}
-
-
-def run_planned_lookup(plans):
-	"""Runs each plan and returns one plain-text answer built from real rows."""
-	return "\n\n".join(_run_one(plan) for plan in plans)
-
-
-def _count(plan):
-	doctype = plan["doctype"]
-	if not frappe.has_permission(doctype, "read"):
-		return f"You do not have permission to read {doctype}."
-	# Dict-style aggregate: still a frappe.get_list, so permissions apply.
-	count = frappe.get_list(doctype, filters=plan["filters"], fields=[{"COUNT": "*", "as": "count"}])[0]["count"]
-	where = f" ({plan['label']})" if plan["label"] else ""
-	return f"{doctype}: {count:,} record{'s' if count != 1 else ''}{where}."
-
-
-# Fields worth showing for one document, in order, when present.
-DOCUMENT_FIELDS = (
-	"supplier", "supplier_name", "customer", "customer_name", "party_type", "party", "party_name",
-	"employee", "employee_name", "company", "posting_date", "transaction_date", "bill_no", "bill_date",
-	"due_date", "status", "workflow_state", "grand_total", "rounded_total", "outstanding_amount",
-	"paid_amount", "total_debit", "voucher_type", "remarks",
-)
-DOCSTATUS_LABELS = {0: "Draft", 1: "Submitted", 2: "Cancelled"}
-
-
-def _user_label(user):
-	"""'Full Name (user@id)' for a User ID, or the ID if it has no name."""
-	if not user:
-		return ""
-	full_name = frappe.db.get_value("User", user, "full_name")
-	return f"{full_name} ({user})" if full_name and full_name != user else user
-
-
-def _format_value(meta, fieldname, value, row):
-	"""Display text for one field value (money in the document's currency)."""
-	df = meta.get_field(fieldname)
-	if df and df.fieldtype == "Currency" and value not in (None, ""):
-		return fmt_money(value, currency=row.get("currency"))
-	if isinstance(value, str) and len(value) > 200:
-		return value[:200] + "..."
-	return value
-
-
-def _run_document(plan):
-	"""Details of one exact document the user named by ID, permission-checked."""
-	doctype, name = plan["doctype"], plan["name"]
-	if not frappe.has_permission(doctype, "read", doc=name):
-		return f"{doctype} {name} exists, but you do not have permission to read it."
-
-	meta = frappe.get_meta(doctype)
-	tokens = plan["tokens"]
-	# Extra fields the user named, e.g. "supplier name", "bill no", "tax".
-	requested = []
-	for t in tokens:
-		if len(t) <= 2 or t in STOP_WORDS:
-			continue
-		for df in meta.fields:
-			if df.fieldtype in NON_VALUE_FIELDTYPES or df.hidden:
-				continue
-			if t in df.fieldname.split("_") and df.fieldname not in requested:
-				requested.append(df.fieldname)
-				break
-
-	fields = [f for f in (meta.title_field, *DOCUMENT_FIELDS, *requested) if f and meta.has_field(f)]
-	fields = list(dict.fromkeys(fields))
-	if meta.has_field("currency"):
-		fields.append("currency")
-	row = frappe.get_list(
-		doctype,
-		filters={"name": name},
-		fields=["name", "owner", "creation", "modified", "modified_by", "docstatus", *fields],
-		limit_page_length=1,
-	)
-	if not row:
-		return f"{doctype} {name} exists, but you do not have permission to read it."
-	row = row[0]
-
-	lines = [f"{doctype} {name}:"]
-	for f in fields:
-		df = meta.get_field(f)
-		if f == "currency" or row.get(f) in (None, "") or (df.fieldtype in ("Currency", "Float") and not row[f]):
-			continue
-		lines.append(f"- {meta.get_label(f)}: {_format_value(meta, f, row[f], row)}")
-	if meta.is_submittable:
-		lines.append(f"- Document Status: {DOCSTATUS_LABELS.get(row.docstatus, row.docstatus)}")
-	lines.append(f"- Created By: {_user_label(row.owner)}")
-	lines.append(f"- Created On: {frappe.utils.format_datetime(row.creation)}")
-	if row.modified_by and row.modified_by != row.owner:
-		lines.append(f"- Last Modified By: {_user_label(row.modified_by)} on {frappe.utils.format_datetime(row.modified)}")
-	return "\n".join(lines)
-
-
-def _run_missing_id(plan):
-	"""Answer for an ID that matched no record the router could find."""
-	where = plan["doctype"] or "any document type whose naming series matches it"
-	return (
-		f"No record with ID '{plan['doc_id']}' was found in {where}.\n"
-		"Check the ID for typos (it must match exactly, including dashes)."
-	)
-
-
-def _run_user_info(plan):
-	"""Answer for an email typed without any DocType to search."""
-	email = plan["email"]
-	user = frappe.db.get_value("User", {"name": email}, ["name", "full_name", "enabled", "user_type"], as_dict=True)
-	if not user:
-		return f"'{email}' is not a User in this system. Name a document type to search, e.g. 'latest purchase invoice by {email}'."
-	if not frappe.has_permission("User", "read", doc=user.name) and user.name != frappe.session.user:
-		return f"{email} is a User, but you do not have permission to see its details."
-	return (
-		f"User {user.name}: {user.full_name or '-'} ({'Enabled' if user.enabled else 'Disabled'}, {user.user_type}).\n"
-		f"To see their documents, ask e.g. 'latest purchase invoice created by {email}'."
-	)
-
-
-def _run_one(plan):
-	kind = plan.get("kind", "list")
-	if kind == "document":
-		return _run_document(plan)
-	if kind == "missing_id":
-		return _run_missing_id(plan)
-	if kind == "user_info":
-		return _run_user_info(plan)
-	if plan["error"]:
-		return plan["error"]
-	if plan["is_count"]:
-		return _count(plan)
-
-	doctype = plan["doctype"]
-	result = lookup_records(doctype=doctype, filters=plan["filters"], order_by=plan["order_by"], limit=plan["limit"])
-
-	if result.get("error"):
-		return f"I couldn't look up {doctype}: {result['error']}"
-
-	rows = result.get("records") or []
-
-	# A name may live in the ID or email rather than the title field (e.g. a
-	# User whose full_name is blank) - retry on those before saying "none".
-	if not rows and plan.get("name_words"):
-		meta = frappe.get_meta(doctype)
-		like = ["like", "%" + "%".join(plan["name_words"]) + "%"]
-		for f in ("name", "email", "first_name", "full_name"):
-			if f == plan["name_field"] or (f != "name" and not meta.has_field(f)):
-				continue
-			retry_filters = {**plan["filters"], f: like}
-			retry_filters.pop(plan["name_field"], None)
-			rows = (
-				lookup_records(doctype=doctype, filters=retry_filters, order_by=plan["order_by"], limit=plan["limit"]).get(
-					"records"
-				)
-				or []
+			return list(
+				dict.fromkeys(frappe.get_all("Workflow Document State", {"parent": workflow}, pluck="state"))
 			)
-			if rows:
-				break
-
-	where = f" ({plan['label']})" if plan["label"] else ""
-	if not rows:
-		return (
-			f"No {doctype} records found{where} that you have permission to see.\n"
-			f"Check the {doctype} list view, or try a different date or name."
-		)
-
-	meta = frappe.get_meta(doctype)
-	candidates = [
-		meta.title_field, *plan["requested_fields"], plan.get("date_field"), plan.get("value_field"), "status", "grand_total"
-	]
-	if plan.get("show_owner"):
-		candidates.insert(1, "owner")
-	show = []
-	for f in candidates:
-		if f and f != "name" and f not in show and (meta.has_field(f) or f in ("creation", "owner")):
-			show.append(f)
-	show = show[:6]
-
-	# lookup_records prunes its columns; refetch exactly the ones we want to
-	# show (still via get_list, so permissions still apply).
-	missing = [f for f in show if f not in rows[0]]
-	if meta.has_field("currency") and "currency" not in rows[0]:
-		missing.append("currency")
-	if missing:
-		extra = {
-			r.name: r
-			for r in frappe.get_list(
-				doctype, filters={"name": ["in", [r["name"] for r in rows]]}, fields=["name", *missing]
-			)
-		}
-		for r in rows:
-			r.update({k: v for k, v in (extra.get(r["name"]) or {}).items() if k != "name"})
-	show = [f for f in show if any(r.get(f) not in (None, "") for r in rows)]
-
-	lines = [f"Found {len(rows)} {doctype} record{'s' if len(rows) != 1 else ''}{where}:"]
-	for i, r in enumerate(rows, 1):
-		parts = [str(r["name"])]
-		for f in show:
-			value = r.get(f)
-			if value in (None, ""):
-				continue
-			if f == "owner":
-				parts.append(f"Created By: {_user_label(value)}")
-				continue
-			df = meta.get_field(f)
-			if df and df.fieldtype == "Currency":
-				value = fmt_money(value, currency=r.get("currency"))
-			parts.append(f"{meta.get_label(f) if df else frappe.unscrub(f)}: {value}")
-		lines.append(f"{i}. " + " | ".join(parts))
-
-	if len(rows) == plan["limit"]:
-		which = {"creation asc": "oldest", "grand_total desc": "highest-value", "grand_total asc": "lowest-value"}
-		lines.append(f"\nShowing the {which.get(plan['order_by'], 'latest')} {len(rows)}. Open the {doctype} list for more.")
-	return "\n".join(lines)
-
-
-def database_facts(message):
-	"""Plain-text facts about any document ID or email typed in the message,
-	looked up in the database. Handed to the LLM as grounding when the
-	router itself doesn't answer, so the model never has to guess whether
-	a record or user exists. Returns None when there is nothing to check."""
-	emails, ids, _numbers, rest = _extract_entities(message)
-	if not (emails or ids):
-		return None
-	targets = _detect_targets(rest, _tokens(rest))
-	hint = targets[0][0] if len(targets) == 1 else None
-
-	facts = []
-	for doc_id in ids:
-		found = find_document(doc_id, hint)
-		plan = _document_plan(*found, []) if found else {"kind": "missing_id", "doc_id": doc_id, "doctype": hint}
-		facts.append(_run_one(plan))
-	for email in emails:
-		facts.append(_run_user_info({"email": email}))
-	return "\n\n".join(facts)
+	return []
