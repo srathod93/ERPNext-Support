@@ -10,7 +10,7 @@ from frappe.utils import strip_html_tags
 from support_ai.ai.formatter import extract_thinking
 from support_ai.ai.llm import LLMError, get_llm_config, get_settings
 from support_ai.diagnostics.context import build_document_context
-from support_ai.diagnostics.router import plan_lookup, run_planned_lookup
+from support_ai.diagnostics.router import database_facts, plan_lookup, run_planned_lookup
 
 THREAD_SOURCE_DOCTYPES = ("Comment", "Communication")
 
@@ -209,7 +209,8 @@ def ask(conversation, message, reference_doctype=None, reference_name=None, atta
 	# straight from the database - small local models don't reliably call
 	# the lookup tool, and this needs no model call at all.
 	if _can_use_router(bot, has_reference, attachments):
-		plan = plan_lookup(message)
+		earlier = [m.content for m in convo.messages[:-1] if m.role == "User"][-5:]
+		plan = plan_lookup(message, history=earlier)
 		if plan:
 			debug["router"] = True
 			return _reply(convo, run_planned_lookup(plan), bot=bot, debug=debug)
@@ -232,6 +233,11 @@ def ask(conversation, message, reference_doctype=None, reference_name=None, atta
 			),
 		}
 	]
+	# Ground the model in real data for any ID/email the user typed, so it
+	# never has to guess whether a record or user exists.
+	facts = database_facts(message)
+	if facts:
+		llm_messages.append({"role": "system", "content": "Database lookup for what the user typed (real data):\n" + facts})
 	if not bot or bot.include_diagnostic_context:
 		diagnostic_context = build_context_payload(reference_doctype, reference_name, bool(tools))
 		if diagnostic_context is not None:
