@@ -10,7 +10,7 @@ and chat API.
 
 | DocType | Purpose |
 | ------- | ------- |
-| Support AI Settings | The LLM provider, the reasoning model, streaming, the rate limit, sensitive fields, synonyms, suggested questions and the daily digest. |
+| Support AI Settings | The LLM provider, the reasoning model, streaming, the rate limit, sensitive fields, synonyms, suggested questions, the daily digest, and code access (role and context size). |
 | Support AI Bot | An assistant with its own model, instructions, functions and knowledge files. |
 | Support AI Conversation | One chat thread of a user. |
 | Support AI Message (child) | One message, with its answer source, response time, feedback and actions. |

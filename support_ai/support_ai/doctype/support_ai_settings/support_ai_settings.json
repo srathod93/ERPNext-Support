@@ -44,6 +44,8 @@
   "section_break_diag",
   "enable_live_validation_check",
   "core_apps",
+  "code_access_role",
+  "code_context_chars",
   "section_break_write",
   "write_action_role",
   "section_break_privacy",
@@ -426,12 +428,27 @@
    "label": "Digest Role",
    "options": "Role",
    "depends_on": "enable_daily_digest"
+  },
+  {
+   "fieldname": "code_access_role",
+   "fieldtype": "Link",
+   "label": "Code Access Role",
+   "options": "Role",
+   "default": "System Manager",
+   "description": "Users with this role let Support AI read and search the source code of custom apps, Server Scripts and Client Scripts. Others get data answers only."
+  },
+  {
+   "fieldname": "code_context_chars",
+   "fieldtype": "Int",
+   "label": "Code Context Size (characters)",
+   "default": "6000",
+   "description": "How much code is sent to the AI model per question. Small local models need a small value; a 7B+ or hosted model can take 20000 or more."
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-24 12:00:00.000000",
+ "modified": "2026-11-25 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Support AI",
  "name": "Support AI Settings",

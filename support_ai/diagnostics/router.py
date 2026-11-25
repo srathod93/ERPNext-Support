@@ -59,6 +59,13 @@ NON_VALUE_FIELDTYPES = {
 	"Fold",
 }
 NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10}
+# "search code for X", "find in code: X", "where is this error coming from: X".
+CODE_SEARCH_RE = re.compile(
+	r"^\s*(?:please\s+)?(?:search|find|grep|look)\s+(?:in\s+|the\s+)?(?:custom\s+)?code\s*(?:for|:)?\s*(?P<query>.*)$"
+	r"|^\s*code\s+search\s*[:\-]?\s*(?P<query2>.*)$"
+	r"|^\s*(?:where|which\s+code)\s+(?:is|does)\s+(?:this\s+)?(?:error|message)\s+(?:coming\s+from|come\s+from|raised|thrown)\s*[:?\-]?\s*(?P<query3>.*)$",
+	re.IGNORECASE | re.DOTALL,
+)
 # Requests to change data are never answered by the read-only router.
 ACTION_WORDS = {
 	"create",
@@ -105,6 +112,10 @@ def plan_lookup(message, history=None, context=None, reference=None):
 	Returns:
 		list[dict] | None: Plans for answers.run_planned_lookup.
 	"""
+	code_query = code_search_query(message)
+	if code_query is not None:
+		return [{"kind": "code_search", "query": code_query}]
+
 	emails, ids, numbers, rest = extract_entities(message)
 	tokens = tokens_of(rest)
 	padded = " " + " ".join(tokens) + " "
@@ -145,6 +156,23 @@ def plan_lookup(message, history=None, context=None, reference=None):
 		_plan_for(dt, dt_norm, rest, tokens, emails=emails, list_filters=list_filters)
 		for dt, dt_norm in targets
 	]
+
+
+def code_search_query(message):
+	"""The text to search for when the message is a code-search command
+	("search code for X", "where is this error coming from: X"), else None.
+
+	Parameters:
+		message (str, required): The user's message.
+
+	Returns:
+		str | None: Query text ("" when the command has no text after it).
+	"""
+	match = CODE_SEARCH_RE.match(message or "")
+	if not match:
+		return None
+	text = next(g for g in match.group("query", "query2", "query3") if g is not None)
+	return text.strip().strip("\"'“”").strip()
 
 
 def _reference_plans(reference, targets, tokens):
@@ -279,7 +307,7 @@ class _PlanBuilder:
 		self.consumed = set(dt_words) | {w + "s" for w in dt_words} | {w + "es" for w in dt_words}
 		# Typos of the DocType's own words ("inovoce") or of intent words ("lasted").
 		self.consumed |= {
-			t for t in tokens if is_fuzzy(t, dt_words) or is_fuzzy(t, ("latest", "recent"), 0.8)
+			t for t in tokens if is_fuzzy(t, dt_words) or is_fuzzy(t, ("latest", "recent"), 0.8, min_length=5)
 		}
 		self.filters, self.child_filters, self.labels, self.requested = {}, [], [], []
 		self.error, self.date_field, self.value_field, self.name_field = None, None, None, None
