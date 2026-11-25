@@ -76,11 +76,22 @@ support_ai.MessageRenderer = class {
 	markdown_blocks(part) {
 		const html = [];
 		let list = null;
+		let table = [];
 		const close_list = () => {
 			if (list) html.push(`</${list}>`);
 			list = null;
 		};
+		const close_table = () => {
+			if (table.length) html.push(this.table(table));
+			table = [];
+		};
 		part.split("\n").forEach((line) => {
+			if (/^\s*\|.*\|\s*$/.test(line)) {
+				close_list();
+				table.push(line.trim());
+				return;
+			}
+			close_table();
 			const bullet = line.match(/^\s*[-*•]\s+(.*)$/);
 			const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
 			const heading = line.match(/^\s*#{1,4}\s+(.*)$/);
@@ -99,19 +110,45 @@ support_ai.MessageRenderer = class {
 			else if (line.trim()) html.push(`<p>${this.inline(line)}</p>`);
 		});
 		close_list();
+		close_table();
 		return html.join("");
 	}
 
+	/**
+	 * Renders pipe-table lines ("| a | b |") as an HTML table; the second
+	 * line ("|---|---|") marks the header row.
+	 *
+	 * @param {string[]} lines - Escaped table lines.
+	 * @returns {string} Table HTML in a horizontally scrollable wrapper.
+	 */
+	table(lines) {
+		const cells = (line) => line.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+		const has_header = lines.length > 1 && /^\|?\s*:?-{2,}/.test(lines[1]);
+		const head = has_header ? `<thead><tr>${cells(lines[0]).map((c) => `<th>${this.inline(c)}</th>`).join("")}</tr></thead>` : "";
+		const body_lines = has_header ? lines.slice(2) : lines;
+		const body = body_lines.map((l) => `<tr>${cells(l).map((c) => `<td>${this.inline(c)}</td>`).join("")}</tr>`).join("");
+		return `<div class="support-ai-table-wrap"><table class="support-ai-table">${head}<tbody>${body}</tbody></table></div>`;
+	}
+
+	/**
+	 * Inline markdown: code, bold, _italic_, external links and in-app
+	 * /app/... links (opened with the Desk router, not a page reload).
+	 *
+	 * @param {string} text - Escaped text.
+	 * @returns {string} HTML.
+	 */
 	inline(text) {
 		return text
 			.replace(/`([^`]+)`/g, "<code>$1</code>")
 			.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+			.replace(/(^|\s)_([^_]+)_(?=\s|$)/g, "$1<em>$2</em>")
+			.replace(/\[([^\]]+)\]\((\/app\/[^\s)]+)\)/g, '<a href="$2" class="support-ai-route-link">$1</a>')
 			.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 	}
 
 	// --- Blocks -------------------------------------------------------------------
 
-	intro({ title, description, context }) {
+	intro({ title, description, context, suggestions }) {
 		const $intro = $(`
 			<div class="support-ai-intro">
 				<div class="support-ai-intro-title">
@@ -130,6 +167,9 @@ support_ai.MessageRenderer = class {
 		if (context) $text.append(" ", $("<strong>").text(context));
 		$intro.find(".support-ai-intro-attach").on("click", () => this.widget.attach_file());
 		$intro.find(".support-ai-intro-prompts").on("click", () => this.widget.show_prompts());
+		if (suggestions && suggestions.length) {
+			$intro.append(this.widget.actions.chips(suggestions.map((s) => ({ label: s, prompt: s }))));
+		}
 		return $intro;
 	}
 
@@ -145,6 +185,7 @@ support_ai.MessageRenderer = class {
 				${this.avatar("Assistant")}
 				<div class="support-ai-row-main">
 					<div class="support-ai-row-header"><span class="support-ai-sender"></span></div>
+					<div class="support-ai-stream-text support-ai-text"></div>
 					<div class="support-ai-typing-text"><span class="support-ai-dots"><i></i><i></i><i></i></span><span class="support-ai-typing-label"></span></div>
 				</div>
 			</div>
@@ -154,7 +195,7 @@ support_ai.MessageRenderer = class {
 		return $row;
 	}
 
-	/** opts: index, sent_at, user, thinking, debug_info, attachments, continuation */
+	/** opts: index, sent_at, user, thinking, debug_info, attachments, continuation, actions, feedback, answered_by */
 	message(role, content, opts) {
 		const is_user = role === "User";
 		const stored = opts.index !== undefined && opts.index !== null;
@@ -181,6 +222,7 @@ support_ai.MessageRenderer = class {
 				: $(`<div class="support-ai-text"></div>`).html(this.markdown(content))
 		);
 		this.append_attachments($body, opts.attachments);
+		if (!is_user) $body.append(this.widget.actions.render(opts));
 		if (opts.debug_info) $body.append(this.details(__("Debug"), opts.debug_info, "pre"));
 
 		this.add_actions($row, { is_user, stored, content });

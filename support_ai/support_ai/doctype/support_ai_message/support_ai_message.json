@@ -11,7 +11,15 @@
   "attachments",
   "attachment_context",
   "thinking",
-  "debug_info"
+  "debug_info",
+  "section_break_meta",
+  "answered_by",
+  "response_time",
+  "no_result",
+  "column_break_feedback",
+  "feedback",
+  "feedback_comment",
+  "response_data"
  ],
  "fields": [
   {
@@ -61,11 +69,58 @@
    "label": "Debug Info",
    "options": "JSON",
    "read_only": 1
+  },
+  {
+   "fieldname": "section_break_meta",
+   "fieldtype": "Section Break",
+   "label": "Answer Details"
+  },
+  {
+   "fieldname": "answered_by",
+   "fieldtype": "Select",
+   "label": "Answered By",
+   "options": "\nRouter\nLLM\nError",
+   "read_only": 1
+  },
+  {
+   "fieldname": "response_time",
+   "fieldtype": "Float",
+   "label": "Response Time (s)",
+   "read_only": 1,
+   "precision": "2"
+  },
+  {
+   "fieldname": "no_result",
+   "fieldtype": "Check",
+   "label": "No Result",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_feedback",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "feedback",
+   "fieldtype": "Select",
+   "label": "Feedback",
+   "options": "\nUp\nDown"
+  },
+  {
+   "fieldname": "feedback_comment",
+   "fieldtype": "Small Text",
+   "label": "Feedback Comment"
+  },
+  {
+   "fieldname": "response_data",
+   "fieldtype": "Code",
+   "label": "Response Data",
+   "options": "JSON",
+   "read_only": 1
   }
  ],
  "istable": 1,
  "links": [],
- "modified": "2026-10-21 00:00:00.000000",
+ "modified": "2026-11-24 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Support AI",
  "name": "Support AI Message",

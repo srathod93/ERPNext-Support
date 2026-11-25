@@ -34,7 +34,7 @@ support_ai.Chat = class {
 				<div class="support-ai-main" style="flex:1; display:flex; flex-direction:column; min-width:0;">
 					<div class="support-ai-messages" style="flex:1; overflow-y:auto; padding: 10px; background: var(--subtle-fg); border-radius: 6px;"></div>
 					<div class="support-ai-input-row" style="display:flex; gap: 8px; margin-top: 10px;">
-						<textarea class="form-control support-ai-input" rows="2" placeholder="Describe the issue, e.g. 'Sales Invoice INV-001 won't submit, what is wrong?'"></textarea>
+						<textarea class="form-control support-ai-input" rows="2" placeholder="${__("How can I support you?")}"></textarea>
 						<button class="btn btn-primary support-ai-send">Ask</button>
 					</div>
 				</div>
@@ -80,7 +80,7 @@ support_ai.Chat = class {
 				this.$messages.empty();
 				this.render_message("Assistant", this.reference_doctype && this.reference_name
 					? `I have the context for ${this.reference_doctype} ${this.reference_name} loaded. What issue are you facing?`
-					: "Hi, I'm Support AI. Describe the issue you're facing in ERPNext/Frappe, or open me from a specific document for targeted diagnosis.");
+					: __("Hi, I'm Support AI. How can I support you?"));
 				this.refresh_conversations();
 			},
 		});

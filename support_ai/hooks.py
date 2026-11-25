@@ -42,16 +42,22 @@ commands = ["support_ai.commands.export_fixtures.export_fixtures"]
 # serving a stale cached copy for up to 12 hours even across normal reloads.
 # ASSET_VERSION below is the cache-buster: bump it on every edit to either
 # file below, or changes won't reliably reach already-open browser tabs.
-ASSET_VERSION = "8"
+ASSET_VERSION = "10"
 app_include_js = [
 	f"/assets/support_ai/js/support_ai_message_renderer.js?v={ASSET_VERSION}",
+	f"/assets/support_ai/js/support_ai_actions.js?v={ASSET_VERSION}",
 	f"/assets/support_ai/js/support_ai_widget.js?v={ASSET_VERSION}",
+	f"/assets/support_ai/js/support_ai_error_help.js?v={ASSET_VERSION}",
 	f"/assets/support_ai/js/support_ai_form_button.js?v={ASSET_VERSION}",
 	f"/assets/support_ai/js/support_ai_timeline.js?v={ASSET_VERSION}",
 ]
 
 after_install = "support_ai.install.after_install"
 after_migrate = "support_ai.install.after_migrate"
+
+scheduler_events = {
+	"daily": ["support_ai.support_ai.tasks.send_daily_digest"],
+}
 app_include_css = f"/assets/support_ai/css/support_ai_widget.css?v={ASSET_VERSION}"
 
 # include js, css files in header of web template

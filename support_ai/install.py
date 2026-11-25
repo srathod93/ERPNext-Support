@@ -7,11 +7,33 @@ from support_ai.ai.functions import DEFAULT_WRITE_ROLE
 
 
 def after_install():
+	"""Runs once when the app is installed on a site."""
 	ensure_write_role()
+	ensure_settings_defaults()
 
 
 def after_migrate():
+	"""Runs after every migrate, so settings added in an update get defaults."""
 	ensure_write_role()
+	ensure_settings_defaults()
+
+
+def ensure_settings_defaults():
+	"""Gives Support AI Settings fields added in an update their default value
+	once. A Single's new field reads back empty until saved, which would
+	silently turn e.g. streaming off - a value the admin set is never touched."""
+	meta = frappe.get_meta("Support AI Settings")
+	for fieldname in ("enable_streaming", "rate_limit_per_minute", "sensitive_fieldnames"):
+		df = meta.get_field(fieldname)
+		singles = frappe.qb.DocType("Singles")
+		stored = (
+			frappe.qb.from_(singles)
+			.select(singles.value)
+			.where((singles.doctype == "Support AI Settings") & (singles.field == fieldname))
+			.run()
+		)
+		if df and df.default is not None and not stored:
+			frappe.db.set_single_value("Support AI Settings", fieldname, df.default)
 
 
 def ensure_write_role():
