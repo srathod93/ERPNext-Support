@@ -66,8 +66,10 @@ fast. The asking user's permissions always apply.
   the document through each workflow state, and who must act next.
 - **Stock and dues.** "stock of item laptop", "total outstanding of
   suppliers", "receivable of customers".
-- **Your work.** "What needs my attention?" lists your pending approvals,
-  open tasks and unread notifications.
+- **Your work.** "What needs my attention?" or "my tasks" lists your
+  pending approvals, open tasks and unread notifications. A question with
+  the word "todo" alone, for example "find todo X", searches the ToDo
+  list instead.
 - **Unclear words.** "latest invoices" asks: Sales Invoice or Purchase
   Invoice?
 - **Follow-ups.** A follow-up message keeps the document type of your
@@ -121,12 +123,34 @@ In **Support AI Settings**:
 
 ### Tests
 
+The tests are in `support_ai/tests/`. They use core DocTypes (ToDo, User,
+Role), so they run on any site. Tests that need ERPNext data skip on a site
+without ERPNext. The tests never call an AI model: the model is replaced
+by a stub.
+
+| Module | What it tests |
+| ------ | ------------- |
+| `test_router` | Questions to plans: IDs and emails typed in the question, follow-ups, list-view and form context, status, limits, synonyms, aliases, and questions that go to the AI model. |
+| `test_filters` | Date ranges, amounts, linked values and item filters. |
+| `test_answers` | Document details, child tables, approval history, counts, clarifying questions, the attention inbox, formatting and masking of sensitive fields. |
+| `test_chat` | One chat turn (database or AI model), saved answer details, the reasoning model, rate limit, feedback, export, suggested questions, Confirm/Cancel for data changes, and streaming. |
+| `test_admin` | The Usage and Unanswered Questions reports, the daily digest and the settings defaults. |
+
+Run all tests:
+
 ```bash
 bench --site <test-site> set-config allow_tests true
-bench --site <test-site> run-tests --app support_ai --module support_ai.tests.test_router
+bench --site <test-site> run-tests --app support_ai
 ```
 
-Use a test site. Do not run tests on a production site.
+Run one module:
+
+```bash
+bench --site <test-site> run-tests --module support_ai.tests.test_router
+```
+
+Use a test site. Do not run tests on a production site. When an answer is
+wrong, add the question as a test case in `test_router`.
 
 ### Running in this environment
 
