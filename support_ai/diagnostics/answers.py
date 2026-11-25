@@ -10,6 +10,7 @@ import frappe
 from frappe.utils import fmt_money, format_datetime
 
 from support_ai.diagnostics import insights
+from support_ai.diagnostics.code_search import search_custom_code
 from support_ai.diagnostics.formatting import doc_link, markdown_table, source_line
 from support_ai.diagnostics.lookup import lookup_records
 from support_ai.diagnostics.masking import MASK, mask_record
@@ -127,6 +128,7 @@ def _run_one(plan):
 		"attention": lambda _p: insights.attention_summary(),
 		"stock": _run_stock,
 		"outstanding": _run_outstanding,
+		"code_search": _run_code_search,
 	}
 	runner = runners.get(plan.get("kind", "list"))
 	if runner:
@@ -492,3 +494,25 @@ def _run_outstanding(plan):
 			"no_result": True,
 		}
 	return insights.outstanding_summary(plan["party_type"], plan["party_names"])
+
+
+def _run_code_search(plan):
+	"""Where a text / error message appears in the site's custom code."""
+	if not plan["query"]:
+		return {"text": "What should I search for? e.g. `search code for Last Name cannot be empty`", "no_result": True}
+	result = search_custom_code(plan["query"], limit=10)
+	if result.get("error"):
+		return {"text": result["error"], "no_result": True}
+	matches = result["matches"]
+	if not matches:
+		return {
+			"text": f"'{plan['query']}' was not found in the custom apps, Server Scripts or Client Scripts of this site.\n"
+			"It may come from a core app (Frappe/ERPNext), which is not searched.",
+			"no_result": True,
+		}
+	blocks = [f"**Found {len(matches)} place{'s' if len(matches) != 1 else ''} in custom code** for '{plan['query']}'"]
+	for number, match in enumerate(matches, 1):
+		where = f"`{match['path']}:{match['line']}`" + (f" in `{match['function']}()`" if match["function"] else "")
+		blocks.append(f"**{number}. {match['source']}** {where}\n```\n{match['snippet']}\n```")
+	blocks.append(source_line("custom apps, Server Scripts, Client Scripts", "code search"))
+	return {"text": "\n\n".join(blocks)}

@@ -23,7 +23,13 @@ def ensure_settings_defaults():
 	once. A Single's new field reads back empty until saved, which would
 	silently turn e.g. streaming off - a value the admin set is never touched."""
 	meta = frappe.get_meta("Support AI Settings")
-	for fieldname in ("enable_streaming", "rate_limit_per_minute", "sensitive_fieldnames"):
+	for fieldname in (
+		"enable_streaming",
+		"rate_limit_per_minute",
+		"sensitive_fieldnames",
+		"code_access_role",
+		"code_context_chars",
+	):
 		df = meta.get_field(fieldname)
 		singles = frappe.qb.DocType("Singles")
 		stored = (

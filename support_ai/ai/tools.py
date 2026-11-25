@@ -66,6 +66,8 @@ def get_tools(bot, has_reference, config):
 			ToolSpec(fn["name"], fn["description"], fn["parameters"], lambda args: lookup_records(**args))
 		)
 
+	tools += _code_tools()
+
 	if bot and bot.enable_file_search and bot.knowledge_files and not uses_openai_vector_store(bot, config):
 		tools.append(
 			ToolSpec(
@@ -107,6 +109,40 @@ def get_tools(bot, has_reference, config):
 		)
 
 	return tools
+
+
+def _code_tools():
+	"""search_custom_code / get_customization_map, only for users with the
+	code access role (Support AI Settings)."""
+	from support_ai.diagnostics.code_search import can_read_code, search_custom_code
+	from support_ai.diagnostics.customization_map import build_customization_map
+
+	if not can_read_code():
+		return []
+	search = ToolSpec(
+		"search_custom_code",
+		"Search this site's custom apps, Server Scripts and Client Scripts for an error message, field, "
+		"function or any text. Use it to find WHICH code raises an error or sets a value. Returns file, line, "
+		"function and a code snippet.",
+		{
+			"type": "object",
+			"properties": {"query": {"type": "string", "description": "Error message or text to find, e.g. 'Last Name cannot be empty'"}},
+			"required": ["query"],
+		},
+		lambda args: search_custom_code(args.get("query") or ""),
+	)
+	customizations = ToolSpec(
+		"get_customization_map",
+		"Everything that customizes one DocType on this site: hook functions with their code, overrides, "
+		"Server/Client Scripts, custom fields, workflow, notifications, webhooks, permission rules.",
+		{
+			"type": "object",
+			"properties": {"doctype": {"type": "string", "description": "Exact DocType name, e.g. 'Purchase Invoice'"}},
+			"required": ["doctype"],
+		},
+		lambda args: build_customization_map(args.get("doctype") or ""),
+	)
+	return [search, customizations]
 
 
 def _normalize_args(args):

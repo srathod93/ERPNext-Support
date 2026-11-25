@@ -78,6 +78,54 @@ fast. The asking user's permissions always apply.
 Questions that ask "why" or "how to fix" go to the AI model. The model
 also gets the real data for any ID or email in the question.
 
+### Your custom code and customizations
+
+Support AI can read this site's customizations to explain an error or a
+behaviour. Only users with the **Code Access Role** (default: System
+Manager) get this. Other users get answers from data only.
+
+- **Find the source of an error.** Ask "search code for Last Name cannot
+  be empty", or "where is this error coming from: ...". Support AI
+  searches the custom apps, the Server Scripts and the Client Scripts. It
+  shows the file or script, the line, the function and the code around
+  it. It also finds an error message with filled-in values, for example
+  "Last Name cannot be empty" in `f"{field_name} cannot be empty"`.
+- **"Why" questions use the code.** For a "why" question or an error,
+  Support AI first searches the code for the error text. It also adds the
+  customizations of the DocType that you name. Then the AI model answers.
+  When the exact error text is found, the reply starts with a
+  **Source of this error** line that links to the script or names the file.
+  This line comes from the search, not from the AI model, so it is always
+  correct.
+- **Customization map of a DocType.** It contains:
+  - the hook functions of custom apps (`doc_events`, `override_doctype_class`,
+    `doctype_js`, permission hooks and overridden whitelisted methods),
+    with their real source code
+  - Server Scripts, Client Scripts, Custom Fields and Property Setters
+  - the active Workflow, Notifications, Webhooks, Assignment Rules, User
+    Permissions and custom Reports
+
+  When you ask about "submit", "cancel" or "save", the hooks for that
+  event come first.
+- **Size limit.** The **Code Context Size** setting limits how much code
+  goes to the model. When code does not fit, the answer says what was left
+  out.
+- **Secrets.** Values of hard-coded keys, tokens and passwords are hidden
+  in the code that Support AI shows or sends.
+
+Core apps (Frappe, ERPNext, HRMS, Payments, India Compliance) are not
+searched. Change this list in **Core Apps**.
+
+**Caution:** with a hosted model (OpenAI, Groq and others), your source
+code goes to that service. With a local Ollama model, the code stays on
+your server.
+
+**Model size:** a 1.5B model can find and quote the code, but it often
+explains the code wrongly. Use a 7B or larger model (for example
+`qwen2.5-coder:7b`, which needs about 8 GB of RAM) or a hosted model. A
+long code context on a CPU-only server can take 1 to 3 minutes. Set
+**Request Timeout** to 300 seconds or more.
+
 ### Chat features
 
 - Document IDs in answers are links. Click one to open the document.
@@ -111,6 +159,11 @@ In **Support AI Settings**:
 - **Suggested Questions**: one-click questions for each role.
 - **Daily Digest**: each morning, email the users with the **Digest Role**
   a list of what needs their attention.
+- **Code Access Role**: the users who can let Support AI read and search
+  custom code. The default is System Manager.
+- **Code Context Size**: the number of characters of code sent per
+  question. The default is 6000. Use 20000 or more with a 7B+ or hosted
+  model.
 
 ### Reports
 
@@ -135,6 +188,7 @@ by a stub.
 | `test_answers` | Document details, child tables, approval history, counts, clarifying questions, the attention inbox, formatting and masking of sensitive fields. |
 | `test_chat` | One chat turn (database or AI model), saved answer details, the reasoning model, rate limit, feedback, export, suggested questions, Confirm/Cancel for data changes, and streaming. |
 | `test_admin` | The Usage and Unanswered Questions reports, the daily digest and the settings defaults. |
+| `test_code` | The code search (scripts, files, filled-in error messages, secrets), the customization map (hooks with source, size limit, access role), the "search code for" command, the code tools for the AI and the "Source of this error" line. |
 
 Run all tests:
 

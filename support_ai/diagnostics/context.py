@@ -10,7 +10,7 @@ import signal
 
 import frappe
 
-from support_ai.diagnostics.indexer import get_doctype_custom_code_context
+from support_ai.diagnostics.customization_map import build_customization_map
 from support_ai.diagnostics.masking import mask_record
 
 VALIDATION_CHECK_TIMEOUT_SECONDS = 10
@@ -73,7 +73,7 @@ def build_document_context(doctype, name):
 		"validation_check": run_validation_check(doc),
 		"workflow": get_workflow_context(doctype, doc),
 		"recent_error_logs": get_related_error_logs(doctype, name),
-		"custom_code": get_doctype_custom_code_context(doctype),
+		"custom_code": build_customization_map(doctype),
 		"field_values": get_field_values(doc, meta),
 	}
 	return context

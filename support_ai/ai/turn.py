@@ -54,6 +54,7 @@ class ChatTurn:
 		self.started = time.monotonic()
 		self.debug = {"bot": bot.name if bot else None}
 		self.config, self.config_error = None, None
+		self.source_note = None  # "Source of this error: ..." line, set by code grounding
 
 	@property
 	def has_reference(self):
@@ -153,6 +154,8 @@ class ChatTurn:
 		thinking, reply = extract_thinking(result.get("content"), result.get("thinking"))
 		self.debug["tool_calls"] = ctx.debug
 		reply = (reply or "(no response)") + _tool_sources(ctx.debug)
+		if self.source_note:
+			reply = f"{self.source_note}\n\n{reply}"
 		return self._reply(reply, thinking=thinking, answered_by="LLM", actions=ctx.pending_actions)
 
 	def _run_engine(self, messages, tools, ctx, max_rounds):
@@ -188,6 +191,9 @@ class ChatTurn:
 					"content": "Database lookup for what the user typed (real data):\n" + facts,
 				}
 			)
+		code, self.source_note = self._code_grounding()
+		if code:
+			messages.append({"role": "system", "content": "Code context from this site (read-only):\n" + code})
 		if not self.bot or self.bot.include_diagnostic_context:
 			context = build_context_payload(self.reference_doctype, self.reference_name, bool(tools))
 			if context is not None:
@@ -202,6 +208,16 @@ class ChatTurn:
 		if images:
 			messages[-1]["images"] = images
 		return messages
+
+	def _code_grounding(self):
+		"""Where the error text appears in custom code, plus the named
+		DocType's customizations - only for "why / error" questions."""
+		if not self._needs_reasoning():
+			return None, None
+		from support_ai.diagnostics.code_context import collect_code_grounding
+
+		reference = self.reference_doctype if self.has_reference else None
+		return collect_code_grounding(self.message, reference_doctype=reference)
 
 	def _stream_sink(self):
 		"""stream(event, text) that pushes to this user's chat over realtime, or None."""
