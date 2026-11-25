@@ -22,8 +22,9 @@ ATTENTION_WORDS = {
 	"my approvals",
 	"my tasks",
 	"my todos",
-	"to do",
-	"todo",
+	"my todo",
+	"my to do",
+	# A bare "todo" names the ToDo DocType ("find todo X"), so only "my ..." counts.
 }
 HISTORY_WORDS = {
 	"approved",

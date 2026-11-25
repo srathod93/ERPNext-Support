@@ -426,14 +426,15 @@ def previous_doctype(history):
 	return None
 
 
-def is_fuzzy(token, words, cutoff=0.75):
-	"""True when token is a likely typo of one of words ("inovoce" ~ "invoice")."""
-	return len(token) >= 4 and bool(difflib.get_close_matches(token, words, n=1, cutoff=cutoff))
+def is_fuzzy(token, words, cutoff=0.75, min_length=4):
+	"""True when token is a likely typo of one of words ("inovoce" ~ "invoice").
+	Short tokens are too ambiguous: "test" is 80% similar to "latest"."""
+	return len(token) >= min_length and bool(difflib.get_close_matches(token, words, n=1, cutoff=cutoff))
 
 
 def has_fuzzy_intent(tokens):
 	"""True when a word is a typo of a data-intent word ("lasted", "lates")."""
-	return any(is_fuzzy(t, ("latest", "show", "give", "list", "find", "recent"), 0.8) for t in tokens)
+	return any(is_fuzzy(t, ("latest", "recent"), 0.8, min_length=5) for t in tokens)
 
 
 def doctype_names():

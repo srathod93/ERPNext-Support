@@ -279,7 +279,7 @@ class _PlanBuilder:
 		self.consumed = set(dt_words) | {w + "s" for w in dt_words} | {w + "es" for w in dt_words}
 		# Typos of the DocType's own words ("inovoce") or of intent words ("lasted").
 		self.consumed |= {
-			t for t in tokens if is_fuzzy(t, dt_words) or is_fuzzy(t, ("latest", "recent"), 0.8)
+			t for t in tokens if is_fuzzy(t, dt_words) or is_fuzzy(t, ("latest", "recent"), 0.8, min_length=5)
 		}
 		self.filters, self.child_filters, self.labels, self.requested = {}, [], [], []
 		self.error, self.date_field, self.value_field, self.name_field = None, None, None, None
